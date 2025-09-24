@@ -6,16 +6,16 @@ const cors = require('cors');
 const app = express();
 const port = process.env.PORT || 4000;
 
-// ✅ Configuración de CORS para permitir peticiones desde tu frontend
+
 app.use(cors({
-  origin: "http://localhost:3000", // tu frontend
+  origin: "http://localhost:3000",
   methods: ["GET", "POST", "PUT", "DELETE", "PATCH"],
   allowedHeaders: ["Content-Type", "Authorization"]
 }));
 
 app.use(express.json());
 
-// Configuración (puedes usar variables de entorno)
+
 const ZEEBE_AUTHORIZATION_SERVER_URL = 'https://login.cloud.camunda.io/oauth/token';
 const ZEEBE_CLIENT_ID = 'ALq97eIT.3F9f.YFVb_XqofT-E1dEaBl';
 const ZEEBE_CLIENT_SECRET = 'uUEFhht9bM_z3VsCrnCOgECUUfU6VxcDghT1FvekWuOcWxbeBUCES0jDxcMRVefb';
@@ -23,7 +23,7 @@ const CAMUNDA_TASKLIST_BASE_URL = 'https://lhr-1.tasklist.camunda.io/79fc9e4f-5c
 const AUDIENCE = 'tasklist.camunda.io';
 const CAMUNDA_ZEEBE_URL = 'https://lhr-1.zeebe.camunda.io/79fc9e4f-5c5f-40bb-9934-39516a17b786'
 
-// Función para obtener el token
+
 async function getAccessToken() {
   const params = new URLSearchParams();
   params.append('grant_type', 'client_credentials');
@@ -37,13 +37,13 @@ async function getAccessToken() {
   return response.data.access_token;
 }
 
-// Endpoint para exponer las tareas en tu backend
+
 app.get('/api/tasks', async (req, res) => {
   try {
     const token = await getAccessToken();
     const response = await axios.post(
       `${CAMUNDA_TASKLIST_BASE_URL}/v1/tasks/search`,
-      {}, // Puedes agregar filtros aquí si lo deseas
+      {}, 
       {
         headers: {
           'Authorization': `Bearer ${token}`,
@@ -58,10 +58,10 @@ app.get('/api/tasks', async (req, res) => {
   }
 });
 
-// Completar tarea
+
 app.patch("/api/tasks/:id/complete", async (req, res) => {
   const { id } = req.params;
-  // Espera un array de variables en el body
+
   const variables = req.body.variables || [];
 
   try {
@@ -69,7 +69,7 @@ app.patch("/api/tasks/:id/complete", async (req, res) => {
 
     const response = await axios.patch(
       `${CAMUNDA_TASKLIST_BASE_URL}/v1/tasks/${id}/complete`,
-      { variables }, // variables debe ser un array de objetos {name, value}
+      { variables }, 
       {
         headers: {
           Authorization: `Bearer ${token}`,
@@ -85,7 +85,7 @@ app.patch("/api/tasks/:id/complete", async (req, res) => {
   }
 });
 
-// 🚀 Iniciar proceso
+
 app.post("/api/process/start", async (req, res) => {
   try {
     const token = await getAccessToken();
@@ -94,8 +94,8 @@ app.post("/api/process/start", async (req, res) => {
     const response = await axios.post(
       `${CAMUNDA_ZEEBE_URL}/v2/process-instances`,
       {
-        processDefinitionId: "Process_Approval", // Aquí va el ID del proceso BPMN, por ejemplo "Process_Approval"
-        version: -1,   // Opcional: -1 para la última versión
+        processDefinitionId: "Process_Approval", 
+        version: -1,  
         variables: variables || {},
       },
       {
