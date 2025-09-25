@@ -61,15 +61,14 @@ app.get('/api/tasks', async (req, res) => {
 
 app.patch("/api/tasks/:id/complete", async (req, res) => {
   const { id } = req.params;
-
-  const variables = req.body.variables || [];
+  const variables = req.body.variables || {};
 
   try {
     const token = await getAccessToken();
 
     const response = await axios.patch(
       `${CAMUNDA_TASKLIST_BASE_URL}/v1/tasks/${id}/complete`,
-      { variables }, 
+      { variables },
       {
         headers: {
           Authorization: `Bearer ${token}`,
