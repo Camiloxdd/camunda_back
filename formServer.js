@@ -24,7 +24,6 @@ app.use(express.json());
 app.use(cors());
 app.use(bodyParser.json());
 
-// Conexión a MySQL
 const pool = mysql.createPool({
   host: "127.0.0.1",
   user: "root",
@@ -62,7 +61,6 @@ app.put("/formularios/:id", async (req, res) => {
   try {
     await conn.beginTransaction();
 
-    // Actualizar datos generales del formulario
     await conn.query(
       `UPDATE formularios SET
         nombre = ?, fechaSolicitud = ?, fechaEntrega = ?, justificacion = ?, area = ?, sede = ?, urgenciaCompra = ?, tiempoGestion = ?, anexos = ?,
@@ -98,10 +96,8 @@ app.put("/formularios/:id", async (req, res) => {
       ]
     );
 
-    // Eliminar filas anteriores
     await conn.query("DELETE FROM items_formulario WHERE formulario_id = ?", [id]);
 
-    // Insertar nuevas filas
     for (const fila of filas) {
       await conn.query(
         `INSERT INTO items_formulario (
@@ -138,7 +134,6 @@ app.post("/formularios", async (req, res) => {
   try {
     await conn.beginTransaction();
 
-    // Insertar datos generales
     const [result] = await conn.query(
       `INSERT INTO formularios (
         nombre, fechaSolicitud, fechaEntrega, justificacion, area, sede, urgenciaCompra, tiempoGestion, anexos,
@@ -175,7 +170,6 @@ app.post("/formularios", async (req, res) => {
 
     const formularioId = result.insertId;
 
-    // Insertar las filas asociadas
     for (const fila of filas) {
       await conn.query(
         `INSERT INTO items_formulario (
@@ -209,7 +203,7 @@ app.post("/formularios", async (req, res) => {
 app.get("/formularios", async (req, res) => {
   try {
     const [rows] = await pool.query("SELECT * FROM formularios");
-    res.json(rows); // 👈 siempre responder JSON
+    res.json(rows); 
   } catch (err) {
     console.error(err);
     res.status(500).json({ error: "Error al obtener formularios" });
@@ -220,7 +214,6 @@ app.get("/formularios/:id", async (req, res) => {
   try {
     const { id } = req.params;
 
-    // Traer el formulario principal
     const [formRows] = await pool.query(
       "SELECT * FROM formularios WHERE id = ?",
       [id]
@@ -262,7 +255,6 @@ app.get("/formularios/:id/excel", async (req, res) => {
     const plantillaPath = path.join(__dirname, "templates", "plantilla.xlsx");
     console.log("Intentando leer plantilla en:", plantillaPath);
 
-    // Verifica que la plantilla existe
     if (!fs.existsSync(plantillaPath)) {
       console.error("❌ Plantilla no encontrada:", plantillaPath);
       return res.status(500).json({ error: "Plantilla no encontrada" });
@@ -366,13 +358,42 @@ app.post("/api/process/start", async (req, res) => {
   }
 });
 
-// Obtener todas las tareas activas (v2 user-tasks)
+app.post("/api/process/start-revision", async (req, res) => {
+  try {
+    const token = await getAccessToken();
+    const { variables } = req.body;
+
+    const response = await axios.post(
+      `${CAMUNDA_ZEEBE_URL}/v2/process-instances`,
+      {
+        processDefinitionId: "Process_1pw9wvj", 
+        version: -1,
+        variables: variables || {},
+      },
+      {
+        headers: {
+          Authorization: `Bearer ${token}`,
+          "Content-Type": "application/json",
+        },
+      }
+    );
+
+    res.json(response.data);
+  } catch (error) {
+    console.error(
+      "❌ Error al iniciar proceso de revisión:",
+      error.response?.data || error.message
+    );
+    res.status(500).json({ error: "Error al iniciar proceso de revisión" });
+  }
+});
+
 app.post('/api/tasks/search', async (req, res) => {
   try {
     const token = await getAccessToken();
     const response = await axios.post(
       `${CAMUNDA_TASKLIST_BASE_URL}/v2/user-tasks/search`,
-      req.body || {}, // Puedes enviar filtros en el body
+      req.body || {}, 
       {
         headers: {
           'Authorization': `Bearer ${token}`,
@@ -387,7 +408,6 @@ app.post('/api/tasks/search', async (req, res) => {
   }
 });
 
-// Completar tarea activa con variables (v2 user-tasks)
 app.post("/api/tasks/:userTaskKey/complete", async (req, res) => {
   const { userTaskKey } = req.params;
   const variables = req.body.variables || {};
@@ -398,8 +418,7 @@ app.post("/api/tasks/:userTaskKey/complete", async (req, res) => {
     const response = await axios.post(
       `${CAMUNDA_TASKLIST_BASE_URL}/v2/user-tasks/${userTaskKey}/completion`,
       {
-        variables, // Debe ser un objeto, no un array
-        // Puedes agregar "action": "COMPLETED" si lo necesitas
+        variables, 
       },
       {
         headers: {
