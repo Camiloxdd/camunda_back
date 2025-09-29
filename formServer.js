@@ -33,8 +33,8 @@ const pool = mysql.createPool({
 });
 
 const ZEEBE_AUTHORIZATION_SERVER_URL = 'https://login.cloud.camunda.io/oauth/token';
-const ZEEBE_CLIENT_ID = 'ALq97eIT.3F9f.YFVb_XqofT-E1dEaBl';
-const ZEEBE_CLIENT_SECRET = 'uUEFhht9bM_z3VsCrnCOgECUUfU6VxcDghT1FvekWuOcWxbeBUCES0jDxcMRVefb';
+const ZEEBE_CLIENT_ID = 'vytWkNDD-2kEpWRFXQqBf2SQ_xeUm__S';
+const ZEEBE_CLIENT_SECRET = 'kibhYAaHwwsN997vSOLWn0VQuHoAMitK2-wRGyGyJ88dpWD6wzuDQO0FiZL1mMmu';
 const CAMUNDA_TASKLIST_BASE_URL = 'https://lhr-1.tasklist.camunda.io/79fc9e4f-5c5f-40bb-9934-39516a17b786';
 const AUDIENCE = 'tasklist.camunda.io';
 const CAMUNDA_ZEEBE_URL = 'https://lhr-1.zeebe.camunda.io/79fc9e4f-5c5f-40bb-9934-39516a17b786'
