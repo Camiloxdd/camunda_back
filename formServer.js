@@ -21,7 +21,6 @@ app.use(cors({
 }));
 
 app.use(express.json());
-app.use(cors());
 app.use(bodyParser.json());
 
 const pool = mysql.createPool({
@@ -33,11 +32,11 @@ const pool = mysql.createPool({
 });
 
 const ZEEBE_AUTHORIZATION_SERVER_URL = 'https://login.cloud.camunda.io/oauth/token';
-const ZEEBE_CLIENT_ID = 'WmOVQFmV-eNx-JX.WAkdFl8qyBT1iQRw';
-const ZEEBE_CLIENT_SECRET = 'drPog3l4wJjuTnsOE1rX1qUKR4_VCpQRmwfG6JxqqGJczDL4oVHHUp4O4IQfWFzc';
-const CAMUNDA_TASKLIST_BASE_URL = 'https://syd-1.tasklist.camunda.io/662e0426-1f1e-4196-9b47-5f5169089528';
+const ZEEBE_CLIENT_ID = 'mstMzftD6b4lwJitwp6cxb_enYHT~EH6';
+const ZEEBE_CLIENT_SECRET = 'cUKrOf.7nxD.S_HqpRqkqzE7yzR_8LPzuhL0sgD4_6dJvzCkrtX1wI1..~xASgBc';
+const CAMUNDA_TASKLIST_BASE_URL = 'https://jfk-1.tasklist.camunda.io/88efe785-f49b-4d15-9221-9b8390dd411c';
 const AUDIENCE = 'tasklist.camunda.io';
-const CAMUNDA_ZEEBE_URL = 'https://syd-1.zeebe.camunda.io/662e0426-1f1e-4196-9b47-5f5169089528'
+const CAMUNDA_ZEEBE_URL = 'https://jfk-1.zeebe.camunda.io/88efe785-f49b-4d15-9221-9b8390dd411c'
 
 
 async function getAccessToken() {
