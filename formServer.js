@@ -32,11 +32,11 @@ const pool = mysql.createPool({
 });
 
 const ZEEBE_AUTHORIZATION_SERVER_URL = 'https://login.cloud.camunda.io/oauth/token';
-const ZEEBE_CLIENT_ID = 'mstMzftD6b4lwJitwp6cxb_enYHT~EH6';
-const ZEEBE_CLIENT_SECRET = 'cUKrOf.7nxD.S_HqpRqkqzE7yzR_8LPzuhL0sgD4_6dJvzCkrtX1wI1..~xASgBc';
-const CAMUNDA_TASKLIST_BASE_URL = 'https://jfk-1.tasklist.camunda.io/88efe785-f49b-4d15-9221-9b8390dd411c';
+const ZEEBE_CLIENT_ID = 'KV5mawg9OFgYpHAyUeOqV7H~2_eCsv0q';
+const ZEEBE_CLIENT_SECRET = 'yALsfsBg-Ihqqwy.IL2N8.mb~EZZ1xi61sweE-ClaTSrpctT8xI3WL05DUfH-PHa';
+const CAMUNDA_TASKLIST_BASE_URL = 'https://lhr-1.tasklist.camunda.io/32f305ed-3094-44de-8309-c05c4c0d27bd';
 const AUDIENCE = 'tasklist.camunda.io';
-const CAMUNDA_ZEEBE_URL = 'https://jfk-1.zeebe.camunda.io/88efe785-f49b-4d15-9221-9b8390dd411c'
+const CAMUNDA_ZEEBE_URL = 'https://lhr-1.zeebe.camunda.io/32f305ed-3094-44de-8309-c05c4c0d27bd'
 
 
 async function getAccessToken() {
@@ -202,7 +202,7 @@ app.post("/formularios", async (req, res) => {
 app.get("/formularios", async (req, res) => {
   try {
     const [rows] = await pool.query("SELECT * FROM formularios");
-    res.json(rows); 
+    res.json(rows);
   } catch (err) {
     console.error(err);
     res.status(500).json({ error: "Error al obtener formularios" });
@@ -365,7 +365,7 @@ app.post("/api/process/start-revision", async (req, res) => {
     const response = await axios.post(
       `${CAMUNDA_ZEEBE_URL}/v2/process-instances`,
       {
-        processDefinitionId: "Process_1pw9wvj", 
+        processDefinitionId: "Process_1pw9wvj",
         version: -1,
         variables: variables || {},
       },
@@ -392,7 +392,7 @@ app.post('/api/tasks/search', async (req, res) => {
     const token = await getAccessToken();
     const response = await axios.post(
       `${CAMUNDA_TASKLIST_BASE_URL}/v2/user-tasks/search`,
-      req.body || {}, 
+      req.body || {},
       {
         headers: {
           'Authorization': `Bearer ${token}`,
@@ -417,7 +417,7 @@ app.post("/api/tasks/:userTaskKey/complete", async (req, res) => {
     const response = await axios.post(
       `${CAMUNDA_TASKLIST_BASE_URL}/v2/user-tasks/${userTaskKey}/completion`,
       {
-        variables, 
+        variables,
       },
       {
         headers: {
@@ -438,3 +438,11 @@ app.post("/api/tasks/:userTaskKey/complete", async (req, res) => {
 app.listen(4000, () => {
   console.log("✅ Servidor en http://localhost:4000");
 });
+
+/*
+  camunda.client.mode=saas
+  camunda.client.auth.client-id=KV5mawg9OFgYpHAyUeOqV7H~2_eCsv0q
+  camunda.client.auth.client-secret=yALsfsBg-Ihqqwy.IL2N8.mb~EZZ1xi61sweE-ClaTSrpctT8xI3WL05DUfH-PHa
+  camunda.client.cloud.cluster-id=32f305ed-3094-44de-8309-c05c4c0d27bd
+  camunda.client.cloud.region=lhr-1
+*/
