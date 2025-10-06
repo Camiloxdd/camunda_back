@@ -63,9 +63,8 @@ app.put("/formularios/:id", async (req, res) => {
     await conn.query(
       `UPDATE formularios SET
         nombre = ?, fechaSolicitud = ?, fechaEntrega = ?, justificacion = ?, area = ?, sede = ?, urgenciaCompra = ?, tiempoGestion = ?, anexos = ?,
-        observacionesOne = ?, observacionesTwo = ?, observacionesThree = ?,
         nombreSolicitante = ?, firmaSolicitante = ?, nombreAdministrativo = ?, firmaAdministrativo = ?, nombreGerente = ?, firmaGerente = ?,
-        autorizacionGerencia = ?, fechaCompras = ?, horaCompras = ?, consecutivoCompras = ?, firmaCompras = ?
+        autorizacionGerencia = ?, firmaCompras = ?
       WHERE id = ?`,
       [
         form.nombre,
@@ -77,9 +76,6 @@ app.put("/formularios/:id", async (req, res) => {
         form.urgenciaCompra,
         form.tiempoGestion,
         form.anexos,
-        form.observacionesOne,
-        form.observacionesTwo,
-        form.observacionesThree,
         form.nombreSolicitante,
         form.firmaSolicitante,
         form.nombreAdministrativo,
@@ -87,9 +83,6 @@ app.put("/formularios/:id", async (req, res) => {
         form.nombreGerente,
         form.firmaGerente,
         form.autorizacionGerencia,
-        form.fechaCompras,
-        form.horaCompras,
-        form.consecutivoCompras,
         form.firmaCompras,
         id
       ]
@@ -100,17 +93,19 @@ app.put("/formularios/:id", async (req, res) => {
     for (const fila of filas) {
       await conn.query(
         `INSERT INTO items_formulario (
-          formulario_id, descripcion, cantidad, centro, cuenta, presupuesto, valor, vobo
-        ) VALUES (?,?,?,?,?,?,?,?)`,
+          formulario_id, productoOServicio, cantidad, centro, cuenta, purchaseAprobated, valor, descripcion, vobo, sstAprobacion
+        ) VALUES (?,?,?,?,?,?,?,?,?,?)`,
         [
           id,
-          fila.descripcion,
+          fila.productoOServicio,
           fila.cantidad,
           fila.centro,
           fila.cuenta,
-          fila.presupuesto,
+          fila.purchaseAprobated,
           fila.valor,
-          fila.vobo
+          fila.descripcion,
+          fila.vobo,
+          fila.sstAprobacion
         ]
       );
     }
@@ -136,10 +131,9 @@ app.post("/formularios", async (req, res) => {
     const [result] = await conn.query(
       `INSERT INTO formularios (
         nombre, fechaSolicitud, fechaEntrega, justificacion, area, sede, urgenciaCompra, tiempoGestion, anexos,
-        observacionesOne, observacionesTwo, observacionesThree,
         nombreSolicitante, firmaSolicitante, nombreAdministrativo, firmaAdministrativo, nombreGerente, firmaGerente,
-        autorizacionGerencia, fechaCompras, horaCompras, consecutivoCompras, firmaCompras
-      ) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
+        autorizacionGerencia, firmaCompras
+      ) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
       [
         form.nombre,
         form.fechaSolicitud,
@@ -150,19 +144,17 @@ app.post("/formularios", async (req, res) => {
         form.urgenciaCompra,
         form.tiempoGestion,
         form.anexos,
-        form.observacionesOne,
-        form.observacionesTwo,
-        form.observacionesThree,
+
         form.nombreSolicitante,
         form.firmaSolicitante,
+
         form.nombreAdministrativo,
         form.firmaAdministrativo,
+
         form.nombreGerente,
         form.firmaGerente,
+
         form.autorizacionGerencia,
-        form.fechaCompras,
-        form.horaCompras,
-        form.consecutivoCompras,
         form.firmaCompras
       ]
     );
@@ -172,19 +164,24 @@ app.post("/formularios", async (req, res) => {
     for (const fila of filas) {
       await conn.query(
         `INSERT INTO items_formulario (
-          formulario_id, descripcion, cantidad, centro, cuenta, presupuesto, valor, vobo
-        ) VALUES (?,?,?,?,?,?,?,?)`,
+          formulario_id, descripcion, cantidad, centro, cuenta, valor, vobo, productoOServicio, purchaseAprobated, siExiste, sstAprobacion, aprobatedStatus
+        ) VALUES (?,?,?,?,?,?,?,?,?,?,?,?)`,
         [
           formularioId,
-          fila.descripcion,
-          fila.cantidad,
-          fila.centro,
-          fila.cuenta,
-          fila.presupuesto,
-          fila.valor,
-          fila.vobo
+          fila.descripcion ?? '',
+          fila.cantidad ?? 0,
+          fila.centro ?? '',
+          fila.cuenta ?? '',
+          fila.valor ?? 0,
+          fila.vobo ?? false,
+          fila.productoOServicio ?? '',
+          fila.purchaseAprobated ?? false,
+          fila.siExiste ?? false,
+          fila.sstAprobacion ?? false,
+          fila.aprobatedStatus ?? false,
         ]
       );
+
     }
 
     await conn.commit();
@@ -221,13 +218,13 @@ app.get("/formularios/:id", async (req, res) => {
       return res.status(404).json({ error: "No encontrado" });
     }
 
-    // Traer los ítems relacionados
+
     const [itemsRows] = await pool.query(
       "SELECT * FROM items_formulario WHERE formulario_id = ?",
       [id]
     );
 
-    // Enviar ambos al frontend
+
     res.json({
       formulario: formRows[0],
       filas: itemsRows,
@@ -280,10 +277,6 @@ app.get("/formularios/:id/excel", async (req, res) => {
     worksheet.getCell("T9").value = form.tiempoGestion;
     worksheet.getCell("T10").value = form.anexos;
 
-    worksheet.getCell("B26").value = form.observacionesOne;
-    worksheet.getCell("B27").value = form.observacionesTwo;
-    worksheet.getCell("B28").value = form.observacionesThree;
-
     worksheet.getCell("D31").value = form.nombreSolicitante;
     worksheet.getCell("D32").value = form.firmaSolicitante;
 
@@ -294,22 +287,78 @@ app.get("/formularios/:id/excel", async (req, res) => {
     worksheet.getCell("Q32").value = form.firmaGerente;
 
     worksheet.getCell("B36").value = form.autorizacionGerencia;
-    worksheet.getCell("H36").value = form.fechaCompras;
-    worksheet.getCell("J36").value = form.horaCompras;
-    worksheet.getCell("L36").value = form.consecutivoCompras;
     worksheet.getCell("P36").value = form.firmaCompras;
 
-    let startRow = 14;
+
+    function parseCurrencyToNumber(value) {
+      if (value == null) return NaN;
+      const str = String(value).trim();
+      if (str === '') return NaN;
+
+
+      const lastDot = str.lastIndexOf('.');
+      const lastComma = str.lastIndexOf(',');
+
+      if (lastComma > -1 && lastDot > -1) {
+        if (lastComma > lastDot) {
+          return Number(str.replace(/\./g, '').replace(/,/g, '.'));
+        } else {
+          return Number(str.replace(/,/g, ''));
+        }
+      } else if (lastComma > -1) {
+        return Number(str.replace(/\./g, '').replace(/,/g, '.'));
+      } else {
+        return Number(str.replace(/,/g, ''));
+      }
+    }
+
+    const startRow = 14;
+
     itemsRows.forEach((item, idx) => {
       const row = worksheet.getRow(startRow + idx);
-      row.getCell(2).value = idx + 1; // Número de ítem
-      row.getCell(3).value = item.descripcion;
-      row.getCell(4).value = item.cantidad;
-      row.getCell(5).value = item.centro;
-      row.getCell(6).value = item.cuenta;
-      row.getCell(7).value = item.presupuesto;
-      row.getCell(8).value = item.valor;
-      row.getCell(9).value = item.vobo;
+
+      row.getCell(2).value = idx + 1;
+      row.getCell(3).value = item.productoOServicio;
+      row.getCell(6).value = (item.cantidad !== undefined && item.cantidad !== null) ? Number(item.cantidad) : '';
+      row.getCell(7).value = item.centro || '';
+      row.getCell(8).value = item.cuenta || '';
+
+      const purchaseAprobated =
+        item.purchaseAprobated === 1 ||
+        item.purchaseAprobated === true ||
+        String(item.purchaseAprobated).toLowerCase().includes('si') ||
+        String(item.purchaseAprobated).toLowerCase().includes('sí') ||
+        String(item.purchaseAprobated).toLowerCase().includes('aprob');
+      row.getCell(10).value = purchaseAprobated ? 'Sí' : 'No';
+
+      const rawValor = item.valor;
+      const valorNum = parseCurrencyToNumber(rawValor);
+      const cellValor = row.getCell(12);
+      if (!isNaN(valorNum)) {
+        cellValor.value = valorNum;
+        cellValor.numFmt = '"$"#,##0.00';
+      } else {
+        cellValor.value = rawValor || '';
+      }
+
+      row.getCell(13).value = item.descripcion || '';
+
+      const vobo =
+        item.vobo === 1 ||
+        item.vobo === true ||
+        String(item.vobo).toLowerCase().includes('si') ||
+        String(item.vobo).toLowerCase().includes('sí') ||
+        String(item.vobo).toLowerCase().includes('aprob');
+      row.getCell(14).value = vobo ? 'Sí' : 'No';
+
+      const sstAprobacion =
+        item.sstAprobacion === 1 ||
+        item.sstAprobacion === true ||
+        String(item.sstAprobacion).toLowerCase().includes('si') ||
+        String(item.sstAprobacion).toLowerCase().includes('sí') ||
+        String(item.sstAprobacion).toLowerCase().includes('aprob');
+      row.getCell(17).value = sstAprobacion ? 'Sí' : 'No';
+
       row.commit();
     });
 
@@ -322,6 +371,37 @@ app.get("/formularios/:id/excel", async (req, res) => {
     res.status(500).json({ error: "Error al generar Excel" });
   }
 });
+
+
+app.put("/items/:id/aprobar", async (req, res) => {
+  const { id } = req.params;
+  try {
+    await pool.query(
+      "UPDATE items_formulario SET aprobatedStatus = NOT aprobatedStatus WHERE id = ?",
+      [id]
+    );
+    res.json({ success: true });
+  } catch (error) {
+    console.error("❌ Error al actualizar aprobatedStatus:", error);
+    res.status(500).json({ error: "No se pudo actualizar el estado" });
+  }
+});
+
+
+app.get("/items/:formularioId", async (req, res) => {
+  const { formularioId } = req.params;
+  try {
+    const [rows] = await pool.query(
+      "SELECT * FROM items_formulario WHERE formulario_id = ?",
+      [formularioId]
+    );
+    res.json(rows);
+  } catch (error) {
+    console.error("❌ Error al obtener items:", error);
+    res.status(500).json({ error: "Error al obtener items del formulario" });
+  }
+});
+
 
 
 //CAMUNDA
