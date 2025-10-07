@@ -32,11 +32,11 @@ const pool = mysql.createPool({
 });
 
 const ZEEBE_AUTHORIZATION_SERVER_URL = 'https://login.cloud.camunda.io/oauth/token';
-const ZEEBE_CLIENT_ID = 'KV5mawg9OFgYpHAyUeOqV7H~2_eCsv0q';
-const ZEEBE_CLIENT_SECRET = 'yALsfsBg-Ihqqwy.IL2N8.mb~EZZ1xi61sweE-ClaTSrpctT8xI3WL05DUfH-PHa';
-const CAMUNDA_TASKLIST_BASE_URL = 'https://lhr-1.tasklist.camunda.io/32f305ed-3094-44de-8309-c05c4c0d27bd';
+const ZEEBE_CLIENT_ID = 'nvbxHeJMHshyETuNQ7napSEjO1ZVp0Mh';
+const ZEEBE_CLIENT_SECRET = '25rj2O8VEIiVH6MlQcbkn2RJr22tbUGeUzYpbX1tTSLmYUw-xXa-g3cSTfqLabPm';
+const CAMUNDA_TASKLIST_BASE_URL = 'https://jfk-1.tasklist.camunda.io/9678cfa5-01e6-43a6-9d0d-b418d1a331b7';
 const AUDIENCE = 'tasklist.camunda.io';
-const CAMUNDA_ZEEBE_URL = 'https://lhr-1.zeebe.camunda.io/32f305ed-3094-44de-8309-c05c4c0d27bd'
+const CAMUNDA_ZEEBE_URL = 'https://jfk-1.zeebe.camunda.io/9678cfa5-01e6-43a6-9d0d-b418d1a331b7'
 
 
 async function getAccessToken() {
@@ -520,9 +520,9 @@ app.listen(4000, () => {
 });
 
 /*
-  camunda.client.mode=saas
-  camunda.client.auth.client-id=KV5mawg9OFgYpHAyUeOqV7H~2_eCsv0q
-  camunda.client.auth.client-secret=yALsfsBg-Ihqqwy.IL2N8.mb~EZZ1xi61sweE-ClaTSrpctT8xI3WL05DUfH-PHa
-  camunda.client.cloud.cluster-id=32f305ed-3094-44de-8309-c05c4c0d27bd
-  camunda.client.cloud.region=lhr-1
+camunda.client.mode=saas
+camunda.client.auth.client-id=nvbxHeJMHshyETuNQ7napSEjO1ZVp0Mh
+camunda.client.auth.client-secret=25rj2O8VEIiVH6MlQcbkn2RJr22tbUGeUzYpbX1tTSLmYUw-xXa-g3cSTfqLabPm
+camunda.client.cloud.cluster-id=9678cfa5-01e6-43a6-9d0d-b418d1a331b7
+camunda.client.cloud.region=jfk-1
 */
