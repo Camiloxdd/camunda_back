@@ -1,17 +1,18 @@
 {
-  "type": "module",
   "dependencies": {
     "@camunda8/sdk": "^8.7.30",
     "axios": "^1.12.2",
     "axios-cookiejar-support": "^6.0.4",
+    "bcrypt": "^6.0.0",
     "body-parser": "^2.2.0",
     "camunda-external-task-client-js": "^3.1.0",
     "cookie-parser": "^1.4.7",
     "cors": "^2.8.5",
-    "dotenv": "^17.2.2",
+    "dotenv": "^17.2.3",
     "exceljs": "^4.4.0",
     "express": "^5.1.0",
-    "mysql2": "^3.15.1",
+    "jsonwebtoken": "^9.0.2",
+    "mysql2": "^3.15.2",
     "tough-cookie": "^5.1.2",
     "zeebe-node": "^8.3.2"
   }

@@ -6,22 +6,36 @@ import fs from "fs";
 import dotenv from 'dotenv';
 import path from "path";
 import ExcelJS from "exceljs";
+import axios from 'axios';
+import bcrypt from 'bcrypt';
+import jwt from 'jsonwebtoken';
+import cookieParser from "cookie-parser";
 import { fileURLToPath } from "url";
 dotenv.config();
-const app = express();
-import axios from 'axios';
 const port = process.env.PORT || 4000;
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 
-app.use(cors({
-  origin: "http://localhost:3000",
-  methods: ["GET", "POST", "PUT", "DELETE", "PATCH"],
-  allowedHeaders: ["Content-Type", "Authorization"]
-}));
-
+const app = express();
 app.use(express.json());
 app.use(bodyParser.json());
+app.use(cookieParser());
+
+const ZEEBE_AUTHORIZATION_SERVER_URL = 'https://login.cloud.camunda.io/oauth/token';
+const ZEEBE_CLIENT_ID = 'nvbxHeJMHshyETuNQ7napSEjO1ZVp0Mh';
+const ZEEBE_CLIENT_SECRET = '25rj2O8VEIiVH6MlQcbkn2RJr22tbUGeUzYpbX1tTSLmYUw-xXa-g3cSTfqLabPm';
+const CAMUNDA_TASKLIST_BASE_URL = 'https://jfk-1.tasklist.camunda.io/9678cfa5-01e6-43a6-9d0d-b418d1a331b7';
+const AUDIENCE = 'tasklist.camunda.io';
+const CAMUNDA_ZEEBE_URL = 'https://jfk-1.zeebe.camunda.io/9678cfa5-01e6-43a6-9d0d-b418d1a331b7'
+
+const FRONTEND_URL = 'http://localhost:3000'
+
+app.use(cors({
+  origin: FRONTEND_URL,
+  methods: ["GET", "POST", "PUT", "DELETE", "PATCH"],
+  allowedHeaders: ["Content-Type", "Authorization"],
+  credentials: true
+}));
 
 const pool = mysql.createPool({
   host: "127.0.0.1",
@@ -31,13 +45,22 @@ const pool = mysql.createPool({
   port: 3306
 });
 
-const ZEEBE_AUTHORIZATION_SERVER_URL = 'https://login.cloud.camunda.io/oauth/token';
-const ZEEBE_CLIENT_ID = 'nvbxHeJMHshyETuNQ7napSEjO1ZVp0Mh';
-const ZEEBE_CLIENT_SECRET = '25rj2O8VEIiVH6MlQcbkn2RJr22tbUGeUzYpbX1tTSLmYUw-xXa-g3cSTfqLabPm';
-const CAMUNDA_TASKLIST_BASE_URL = 'https://jfk-1.tasklist.camunda.io/9678cfa5-01e6-43a6-9d0d-b418d1a331b7';
-const AUDIENCE = 'tasklist.camunda.io';
-const CAMUNDA_ZEEBE_URL = 'https://jfk-1.zeebe.camunda.io/9678cfa5-01e6-43a6-9d0d-b418d1a331b7'
+function createJwt(payload) {
+  return jwt.sign(payload, process.env.JWT_SECRET, { expiresIn: '1h' });
+}
 
+async function authMiddleware(req, res, next) {
+  try {
+    const token = req.cookies?.token;
+    if (!token) return res.status(401).json({ message: 'No token' });
+
+    const decoded = jwt.verify(token, process.env.JWT_SECRET);
+    req.user = decoded; // por ejemplo { id, email }
+    next();
+  } catch (err) {
+    return res.status(401).json({ message: 'Invalid token' });
+  }
+}
 
 async function getAccessToken() {
   const params = new URLSearchParams();
@@ -52,6 +75,60 @@ async function getAccessToken() {
   return response.data.access_token;
 }
 
+//LOGIN
+app.post('/api/auth/login', async (req, res) => {
+  const { correo, contraseña } = req.body;
+  if (!correo || !contraseña) return res.status(400).json({ message: 'Email and password required' });
+
+  try {
+    const [rows] = await pool.execute('SELECT id, correo, contraseña, nombre FROM user WHERE correo = ?', [correo]);
+    const user = rows[0];
+    if (!user) return res.status(401).json({ message: 'Invalid credentials' });
+
+    const match = await bcrypt.compare(contraseña, user.contraseña);
+    if (!match) return res.status(401).json({ message: 'Invalid credentials' });
+
+    const token = createJwt({ id: user.id, email: user.correo });
+
+    // Set cookie HttpOnly
+    const cookieOptions = {
+      httpOnly: true,
+      sameSite: 'lax', // puedes usar 'strict' o 'none' dependiendo de tu deploy y dominio
+      secure: process.env.NODE_ENV === 'production', // solo en https
+      maxAge: 60 * 60 * 1000 // 1 hora en ms (coincide con expiresIn)
+    };
+
+    res.cookie('token', token, cookieOptions);
+    // Opcional: no devolver token en body, pero podemos devolver datos de usuario sin password
+    res.json({ id: user.id, email: user.correo, name: user.nombre });
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ message: 'Server error' });
+  }
+});
+
+// Ruta: logout (borra cookie)
+app.post('/api/auth/logout', (req, res) => {
+  res.clearCookie('token', { httpOnly: true, sameSite: 'lax', secure: process.env.NODE_ENV === 'production' });
+  res.json({ ok: true });
+});
+
+// Ruta: obtener usuario actual
+app.get('/api/auth/me', authMiddleware, async (req, res) => {
+  // req.user fue seteado por authMiddleware
+  try {
+    const [rows] = await pool.execute('SELECT id, correo, nombre, cargo FROM user WHERE id = ?', [req.user.id]);
+    const user = rows[0];
+    if (!user) return res.status(404).json({ message: 'User not found' });
+    res.json(user);
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ message: 'Server error' });
+  }
+});
+
+
+//FORMULARIOS
 app.put("/formularios/:id", async (req, res) => {
   const { id } = req.params;
   const { form, filas } = req.body;
