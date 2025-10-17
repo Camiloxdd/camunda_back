@@ -11,10 +11,10 @@ async function run() {
         port: 3306
     });
 
-    const nombre = 'Juan Camilo Bello Roa'
-    const correo = 'testeoRequisiciones@coopidrogas.com.co';
+    const nombre = 'Edison Kenneth Campos Avila'
+    const correo = 'k.campos@coopidrogas.com.co';
     const contraseña = 'password123';
-    const cargo = 'managerGeneral';
+    const cargo = 'CoordiDevWeb';
     const telefono = '3224399893';
     const area = 'Tecnologia y Proyectos';
     const sede = 'Principal'

@@ -127,6 +127,289 @@ app.get('/api/auth/me', authMiddleware, async (req, res) => {
   }
 });
 
+//USUARIOS EDITABLES
+app.get('/api/user/list', authMiddleware, async (req, res) => {
+  try {
+    const [rows] = await pool.query("SELECT * FROM user");
+
+    if (rows.length === 0)
+      return res.status(404).json({ message: 'No hay usuarios registrados' });
+
+    res.json(rows);
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ message: 'Server error' });
+  }
+});
+
+
+
+//CREAR USUARIO
+app.post("/api/user/create", authMiddleware, async (req, res) => {
+  try {
+    const { nombre, correo, contraseña, cargo, telefono, area, sede, super_admin, aprobador, solicitante, comprador, } = req.body;
+
+    if (!nombre || !correo || !contraseña) {
+      return res.status(400).json({ message: "Faltan campos obligatorios." });
+    }
+
+    const hash = await bcrypt.hash(contraseña, 10);
+
+    const [result] = await pool.execute(
+      "INSERT INTO user (nombre, correo, contraseña, cargo, telefono, area, sede, super_admin, aprobador, solicitante, comprador) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+      [nombre, correo, hash, cargo, telefono, area, sede, super_admin ? 1 : 0, aprobador ? 1 : 0, solicitante ? 1 : 0, comprador ? 1 : 0]
+    );
+
+    res.status(201).json({ message: "Usuario creado correctamente", id: result.insertId });
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ message: "Error en el servidor" });
+  }
+});
+
+//EDITAR USUARIO
+app.put('/api/user/update/:id', authMiddleware, async (req, res) => {
+  const { id } = req.params;
+  const { nombre, correo, cargo, telefono, sede, area, super_admin, aprobador, solicitante, comprador } = req.body;
+
+  try {
+    const [result] = await pool.query(
+      `UPDATE user SET nombre=?, correo=?, cargo=?, telefono=?, sede=?, area=?, 
+        super_admin=?, aprobador=?, solicitante=?, comprador=? WHERE id=?`,
+      [nombre, correo, cargo, telefono, sede, area, super_admin, aprobador, solicitante, comprador, id]
+    );
+
+    if (result.affectedRows === 0)
+      return res.status(404).json({ message: 'Usuario no encontrado' });
+
+    res.json({ message: 'Usuario actualizado correctamente' });
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ message: 'Error del servidor' });
+  }
+});
+
+//ELIMINAR USUARIO
+app.delete("/api/user/delete/:id", authMiddleware, async (req, res) => {
+  try {
+    const { id } = req.params;
+    const [result] = await pool.query("DELETE FROM user WHERE id = ?", [id]);
+
+    if (result.affectedRows === 0)
+      return res.status(404).json({ message: "Usuario no encontrado" });
+
+    res.json({ message: "Usuario eliminado correctamente" });
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ message: "Error del servidor" });
+  }
+});
+
+//CREAR REQUISICION
+app.post("/api/requisicion/create", async (req, res) => {
+  try {
+    const { solicitante, productos } = req.body;
+
+    if (!solicitante || !productos?.length) {
+      return res.status(400).json({ message: "Datos incompletos en la solicitud" });
+    }
+
+    const {
+      nombre,
+      fecha,
+      justificacion,
+      area,
+      sede,
+      urgencia,
+      presupuestada,
+    } = solicitante;
+
+    // Calcular valor total
+    const valorTotal = productos.reduce(
+      (acc, p) => acc + (parseFloat(p.valorEstimado) || 0),
+      0
+    );
+
+    // Guardar requisición principal
+    const [reqResult] = await pool.query(
+      `INSERT INTO requisiciones 
+       (nombre_solicitante, fecha, justificacion, area, sede, urgencia, presupuestada, valor_total) 
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+      [nombre, fecha, justificacion, area, sede, urgencia, presupuestada, valorTotal]
+    );
+
+    const requisicionId = reqResult.insertId;
+
+    // Guardar productos
+    const valuesProductos = productos.map((p) => [
+      requisicionId,
+      p.nombre,
+      p.cantidad,
+      p.descripcion,
+      p.compraTecnologica,
+      p.ergonomico,
+      p.valorEstimado,
+      p.centroCosto,
+      p.cuentaContable,
+    ]);
+
+    await pool.query(
+      `INSERT INTO requisicion_productos 
+       (requisicion_id, nombre, cantidad, descripcion, compra_tecnologica, ergonomico, valor_estimado, centro_costo, cuenta_contable)
+       VALUES ?`,
+      [valuesProductos]
+    );
+
+    // === LÓGICA DE APROBACIONES ===
+    const SMLV = 1300000; // (aprox 2025)
+    const limite = SMLV * 10;
+    const requiereAprobacionesAltas = valorTotal >= limite;
+
+    const tieneErgonomico = productos.some((p) => p.ergonomico);
+    const tieneTecnologico = productos.some((p) => p.compraTecnologica);
+
+    // Roles esperados según tipo de requisición
+    const roles = [];
+
+    if (tieneTecnologico) {
+      roles.push({ area: "TyP", rol: "dicTYP" }, { area: "TyP", rol: "gerTyC" });
+    }
+
+    if (tieneErgonomico) {
+      roles.push({ area: "SST", rol: "dicSST" }, { area: "SST", rol: "gerSST" });
+    }
+
+    if (requiereAprobacionesAltas) {
+      roles.push({ area: "GerenciaAdmin", rol: "gerAdmin" });
+      roles.push({ area: "GerenciaGeneral", rol: "gerGeneral" });
+    }
+
+    // Buscar nombres reales en la tabla de usuarios
+    const aprobaciones = [];
+    for (const { area, rol } of roles) {
+      const [rows] = await pool.query(
+        "SELECT nombre FROM user WHERE cargo = ? LIMIT 1",
+        [rol]
+      );
+
+      aprobaciones.push({
+        area,
+        rol_aprobador: rol,
+        nombre_aprobador: rows[0]?.nombre || "Sin asignar",
+      });
+    }
+
+    // Insertar aprobaciones
+    if (aprobaciones.length > 0) {
+      const valuesAprobaciones = aprobaciones.map((a) => [
+        requisicionId,
+        a.area,
+        a.rol_aprobador,
+        a.nombre_aprobador,
+      ]);
+
+      await pool.query(
+        `INSERT INTO requisicion_aprobaciones 
+         (requisicion_id, area, rol_aprobador, nombre_aprobador)
+         VALUES ?`,
+        [valuesAprobaciones]
+      );
+    }
+
+    res.status(201).json({
+      message: "✅ Requisición creada correctamente",
+      id: requisicionId,
+      aprobaciones,
+    });
+  } catch (error) {
+    console.error("❌ Error al crear la requisición:", error);
+    res.status(500).json({ message: "Error al crear la requisición" });
+  }
+});
+
+app.get("/api/requisiciones/pendientes", authMiddleware, async (req, res) => {
+  try {
+    const { id, cargo, nombre, area } = req.user; // viene del token (middleware)
+
+    // Si no es aprobador, no puede ver nada
+    const rolesAprobadores = [
+      "dicTYP",
+      "gerTyC",
+      "dicSST",
+      "gerSST",
+      "gerAdmin",
+      "managerGeneral",
+    ];
+
+    if (!rolesAprobadores.includes(cargo)) {
+      return res.status(403).json({ message: "No autorizado para aprobar requisiciones" });
+    }
+
+    // Buscar las requisiciones donde el usuario sea el aprobador correspondiente
+    const [requisiciones] = await pool.query(
+      `
+      SELECT 
+        r.id AS requisicion_id,
+        r.nombre_solicitante,
+        r.fecha,
+        r.justificacion,
+        r.area,
+        r.sede,
+        r.urgencia,
+        r.presupuestada,
+        r.valor_total,
+        a.id AS aprobacion_id,
+        a.area AS area_aprobacion,
+        a.rol_aprobador,
+        a.nombre_aprobador,
+        a.estado AS estado_aprobacion
+      FROM requisiciones r
+      INNER JOIN requisicion_aprobaciones a ON r.id = a.requisicion_id
+      WHERE a.nombre_aprobador = ? 
+        AND a.estado = 'pendiente'
+      ORDER BY r.fecha DESC
+      `,
+      [nombre]
+    );
+
+    // Si no tiene requisiciones pendientes
+    if (requisiciones.length === 0) {
+      return res.json([]);
+    }
+
+    // Traer los productos asociados a cada requisición
+    const ids = requisiciones.map(r => r.requisicion_id);
+    const [productos] = await pool.query(
+      `
+      SELECT 
+        id AS producto_id,
+        requisicion_id,
+        nombre,
+        descripcion,
+        cantidad,
+        valor_estimado,
+        compra_tecnologica,
+        ergonomico,
+        aprobado
+      FROM requisicion_productos
+      WHERE requisicion_id IN (?)
+      `,
+      [ids]
+    );
+
+    // Agrupar los productos dentro de cada requisición
+    const resultado = requisiciones.map(req => ({
+      ...req,
+      productos: productos.filter(p => p.requisicion_id === req.requisicion_id),
+    }));
+
+    res.json(resultado);
+  } catch (error) {
+    console.error("❌ Error al obtener requisiciones pendientes:", error);
+    res.status(500).json({ message: "Error al obtener requisiciones pendientes" });
+  }
+});
+
 
 //FORMULARIOS
 app.put("/formularios/:id", async (req, res) => {
