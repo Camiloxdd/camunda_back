@@ -45,22 +45,51 @@ const pool = mysql.createPool({
   port: 3306
 });
 
+(async () => {
+  try {
+    // Intentamos agregar la columna
+    await pool.query(
+      `ALTER TABLE requisiciones ADD COLUMN status VARCHAR(50) DEFAULT 'pendiente';`
+    );
+    console.log("Columna 'status' creada correctamente.");
+  } catch (err) {
+    // Si la columna ya existe, MySQL lanza ER_DUP_FIELDNAME
+    if (err.code === 'ER_DUP_FIELDNAME') {
+      console.log("La columna 'status' ya existe, continuando...");
+    } else {
+      console.warn("⚠️ No fue posible asegurar columna status:", err.message || err);
+    }
+  }
+
+  // Asegurar que todas las filas existentes tengan 'pendiente'
+  try {
+    await pool.query(
+      "UPDATE requisiciones SET status = 'pendiente' WHERE status IS NULL;"
+    );
+    console.log("Filas existentes actualizadas con status 'pendiente'.");
+  } catch (err) {
+    console.warn("⚠️ Error actualizando filas existentes:", err.message || err);
+  }
+})();
+
+
 function createJwt(payload) {
   return jwt.sign(payload, process.env.JWT_SECRET, { expiresIn: '1h' });
 }
 
-async function authMiddleware(req, res, next) {
-  try {
-    const token = req.cookies?.token;
-    if (!token) return res.status(401).json({ message: 'No token' });
+export const authMiddleware = (req, res, next) => {
+  const token = req.cookies.token;
+  if (!token) return res.status(401).json({ message: "No token" });
 
+  try {
     const decoded = jwt.verify(token, process.env.JWT_SECRET);
-    req.user = decoded; // por ejemplo { id, email }
+    req.user = decoded;
     next();
   } catch (err) {
-    return res.status(401).json({ message: 'Invalid token' });
+    console.error("❌ Token inválido:", err);
+    res.status(401).json({ message: "Token inválido" });
   }
-}
+};
 
 async function getAccessToken() {
   const params = new URLSearchParams();
@@ -78,34 +107,57 @@ async function getAccessToken() {
 //LOGIN
 app.post('/api/auth/login', async (req, res) => {
   const { correo, contraseña } = req.body;
-  if (!correo || !contraseña) return res.status(400).json({ message: 'Email and password required' });
+  if (!correo || !contraseña) {
+    return res.status(400).json({ message: 'Email and password required' });
+  }
 
   try {
-    const [rows] = await pool.execute('SELECT id, correo, contraseña, nombre FROM user WHERE correo = ?', [correo]);
+    // 🔹 Traer todos los datos necesarios
+    const [rows] = await pool.execute(
+      'SELECT id, correo, contraseña, nombre, cargo, area FROM user WHERE correo = ?',
+      [correo]
+    );
     const user = rows[0];
     if (!user) return res.status(401).json({ message: 'Invalid credentials' });
 
+    // 🔹 Validar contraseña
     const match = await bcrypt.compare(contraseña, user.contraseña);
     if (!match) return res.status(401).json({ message: 'Invalid credentials' });
 
-    const token = createJwt({ id: user.id, email: user.correo });
+    // 🔹 Crear token con todos los datos del usuario
+    const token = createJwt({
+      id: user.id,
+      email: user.correo,
+      nombre: user.nombre,
+      cargo: user.cargo,
+      area: user.area,
+    });
 
-    // Set cookie HttpOnly
+    // 🔹 Configurar cookie
     const cookieOptions = {
       httpOnly: true,
-      sameSite: 'lax', // puedes usar 'strict' o 'none' dependiendo de tu deploy y dominio
-      secure: process.env.NODE_ENV === 'production', // solo en https
-      maxAge: 60 * 60 * 1000 // 1 hora en ms (coincide con expiresIn)
+      sameSite: 'lax', // o 'strict' o 'none'
+      secure: process.env.NODE_ENV === 'production',
+      maxAge: 60 * 60 * 1000, // 1 hora
     };
 
+    // 🔹 Enviar token como cookie
     res.cookie('token', token, cookieOptions);
-    // Opcional: no devolver token en body, pero podemos devolver datos de usuario sin password
-    res.json({ id: user.id, email: user.correo, name: user.nombre });
+
+    // 🔹 Responder con los datos básicos del usuario (sin contraseña)
+    res.json({
+      id: user.id,
+      email: user.correo,
+      nombre: user.nombre,
+      cargo: user.cargo,
+      area: user.area,
+    });
   } catch (err) {
-    console.error(err);
+    console.error('❌ Error en login:', err);
     res.status(500).json({ message: 'Server error' });
   }
 });
+
 
 // Ruta: logout (borra cookie)
 app.post('/api/auth/logout', (req, res) => {
@@ -117,7 +169,7 @@ app.post('/api/auth/logout', (req, res) => {
 app.get('/api/auth/me', authMiddleware, async (req, res) => {
   // req.user fue seteado por authMiddleware
   try {
-    const [rows] = await pool.execute('SELECT id, correo, nombre, cargo FROM user WHERE id = ?', [req.user.id]);
+    const [rows] = await pool.execute('SELECT id, correo, nombre, cargo, area, sede FROM user WHERE id = ?', [req.user.id]);
     const user = rows[0];
     if (!user) return res.status(404).json({ message: 'User not found' });
     res.json(user);
@@ -214,33 +266,25 @@ app.post("/api/requisicion/create", async (req, res) => {
       return res.status(400).json({ message: "Datos incompletos en la solicitud" });
     }
 
-    const {
-      nombre,
-      fecha,
-      justificacion,
-      area,
-      sede,
-      urgencia,
-      presupuestada,
-    } = solicitante;
+    const { nombre, fecha, justificacion, area, sede, urgencia, presupuestada } = solicitante;
 
-    // Calcular valor total
+    // 1️⃣ Calcular valor total
     const valorTotal = productos.reduce(
       (acc, p) => acc + (parseFloat(p.valorEstimado) || 0),
       0
     );
 
-    // Guardar requisición principal
+    // 2️⃣ Insertar la requisición (ahora incluye status)
     const [reqResult] = await pool.query(
       `INSERT INTO requisiciones 
-       (nombre_solicitante, fecha, justificacion, area, sede, urgencia, presupuestada, valor_total) 
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
-      [nombre, fecha, justificacion, area, sede, urgencia, presupuestada, valorTotal]
+       (nombre_solicitante, fecha, justificacion, area, sede, urgencia, presupuestada, valor_total, status) 
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      [nombre, fecha, justificacion, area, sede, urgencia, presupuestada, valorTotal, 'pendiente']
     );
 
     const requisicionId = reqResult.insertId;
 
-    // Guardar productos
+    // 3️⃣ Insertar productos
     const valuesProductos = productos.map((p) => [
       requisicionId,
       p.nombre,
@@ -251,75 +295,66 @@ app.post("/api/requisicion/create", async (req, res) => {
       p.valorEstimado,
       p.centroCosto,
       p.cuentaContable,
+      "pendiente",
     ]);
 
     await pool.query(
       `INSERT INTO requisicion_productos 
-       (requisicion_id, nombre, cantidad, descripcion, compra_tecnologica, ergonomico, valor_estimado, centro_costo, cuenta_contable)
+       (requisicion_id, nombre, cantidad, descripcion, compra_tecnologica, ergonomico, valor_estimado, centro_costo, cuenta_contable, aprobado)
        VALUES ?`,
       [valuesProductos]
     );
 
-    // === LÓGICA DE APROBACIONES ===
-    const SMLV = 1300000; // (aprox 2025)
+    // 4️⃣ Determinar aprobaciones necesarias
+    const SMLV = 1300000;
     const limite = SMLV * 10;
-    const requiereAprobacionesAltas = valorTotal >= limite;
+    const requiereAltas = valorTotal >= limite;
 
     const tieneErgonomico = productos.some((p) => p.ergonomico);
     const tieneTecnologico = productos.some((p) => p.compraTecnologica);
 
-    // Roles esperados según tipo de requisición
-    const roles = [];
+    // Roles que se deben incluir (en orden jerárquico)
+    const rolesNecesarios = [];
 
-    if (tieneTecnologico) {
-      roles.push({ area: "TyP", rol: "dicTYP" }, { area: "TyP", rol: "gerTyC" });
-    }
+    if (tieneTecnologico) rolesNecesarios.push("dicTYP", "gerTyC");
+    if (tieneErgonomico) rolesNecesarios.push("dicSST", "gerSST");
+    if (requiereAltas) rolesNecesarios.push("gerAdmin", "gerGeneral");
 
-    if (tieneErgonomico) {
-      roles.push({ area: "SST", rol: "dicSST" }, { area: "SST", rol: "gerSST" });
-    }
-
-    if (requiereAprobacionesAltas) {
-      roles.push({ area: "GerenciaAdmin", rol: "gerAdmin" });
-      roles.push({ area: "GerenciaGeneral", rol: "gerGeneral" });
-    }
-
-    // Buscar nombres reales en la tabla de usuarios
-    const aprobaciones = [];
-    for (const { area, rol } of roles) {
-      const [rows] = await pool.query(
-        "SELECT nombre FROM user WHERE cargo = ? LIMIT 1",
-        [rol]
+    // 5️⃣ Buscar aprobadores reales desde la tabla users
+    let aprobadores = [];
+    if (rolesNecesarios.length > 0) {
+      const [usuarios] = await pool.query(
+        `SELECT nombre, cargo AS rol, area
+         FROM user
+         WHERE cargo IN (?)`,
+        [rolesNecesarios]
       );
 
-      aprobaciones.push({
-        area,
-        rol_aprobador: rol,
-        nombre_aprobador: rows[0]?.nombre || "Sin asignar",
-      });
+      // Reordenar según el orden original de rolesNecesarios
+      aprobadores = rolesNecesarios
+        .map((rol) => usuarios.find((u) => u.rol === rol))
+        .filter(Boolean);
     }
 
-    // Insertar aprobaciones
-    if (aprobaciones.length > 0) {
-      const valuesAprobaciones = aprobaciones.map((a) => [
-        requisicionId,
-        a.area,
-        a.rol_aprobador,
-        a.nombre_aprobador,
-      ]);
+    // 6️⃣ Insertar aprobaciones con orden y visibilidad
+    for (let i = 0; i < aprobadores.length; i++) {
+      const aprob = aprobadores[i];
+      const orden = i + 1;
+      const visible = i === 0; // Solo el primero visible inicialmente
 
       await pool.query(
-        `INSERT INTO requisicion_aprobaciones 
-         (requisicion_id, area, rol_aprobador, nombre_aprobador)
-         VALUES ?`,
-        [valuesAprobaciones]
+        `INSERT INTO requisicion_aprobaciones
+         (requisicion_id, rol_aprobador, nombre_aprobador, area, estado, orden, visible)
+         VALUES (?, ?, ?, ?, 'pendiente', ?, ?)`,
+        [requisicionId, aprob.rol, aprob.nombre, aprob.area, orden, visible]
       );
     }
 
     res.status(201).json({
-      message: "✅ Requisición creada correctamente",
-      id: requisicionId,
-      aprobaciones,
+      message: "✅ Requisición creada correctamente con aprobadores jerárquicos asignados",
+      requisicionId,
+      valorTotal,
+      aprobadores,
     });
   } catch (error) {
     console.error("❌ Error al crear la requisición:", error);
@@ -329,25 +364,84 @@ app.post("/api/requisicion/create", async (req, res) => {
 
 app.get("/api/requisiciones/pendientes", authMiddleware, async (req, res) => {
   try {
-    const { id, cargo, nombre, area } = req.user; // viene del token (middleware)
+    const { nombre, cargo, area } = req.user; // viene del token o sesión
 
-    // Si no es aprobador, no puede ver nada
+    // Consultar bandera 'solicitante' y nombre real del usuario desde DB
+    const [userRows] = await pool.query(
+      "SELECT solicitante, nombre FROM user WHERE id = ?",
+      [req.user.id]
+    );
+    const userRecord = userRows[0];
+
+    // Si el usuario es solicitante, devolver solo las requisiciones a su nombre
+    if (userRecord && (userRecord.solicitante === 1 || userRecord.solicitante === true)) {
+      const [requisicionesRows] = await pool.query(
+        `
+        SELECT 
+          id AS requisicion_id,
+          nombre_solicitante,
+          fecha,
+          justificacion,
+          area,
+          sede,
+          urgencia,
+          presupuestada,
+          valor_total
+        FROM requisiciones
+        WHERE nombre_solicitante = ?
+        ORDER BY fecha DESC
+        `,
+        [userRecord.nombre]
+      );
+
+      if (requisicionesRows.length === 0) return res.json([]);
+
+      const ids = requisicionesRows.map((r) => r.requisicion_id);
+
+      const [productos] = await pool.query(
+        `
+        SELECT 
+          id,
+          requisicion_id,
+          nombre,
+          descripcion,
+          cantidad,
+          valor_estimado,
+          compra_tecnologica,
+          ergonomico,
+          aprobado
+        FROM requisicion_productos
+        WHERE requisicion_id IN (?) AND (aprobado IS NULL OR aprobado != 'rechazado')
+        `,
+        [ids]
+      );
+
+      const resultado = requisicionesRows.map((reqItem) => ({
+        ...reqItem,
+        productos: productos.filter((p) => p.requisicion_id === reqItem.requisicion_id),
+      }));
+
+      return res.json(resultado);
+    }
+
+    // Roles que pueden aprobar
     const rolesAprobadores = [
       "dicTYP",
       "gerTyC",
       "dicSST",
       "gerSST",
       "gerAdmin",
-      "managerGeneral",
+      "gerGeneral",
     ];
 
     if (!rolesAprobadores.includes(cargo)) {
-      return res.status(403).json({ message: "No autorizado para aprobar requisiciones" });
+      return res
+        .status(403)
+        .json({ message: "No autorizado para aprobar requisiciones" });
     }
 
-    // Buscar las requisiciones donde el usuario sea el aprobador correspondiente
-    const [requisiciones] = await pool.query(
-      `
+    // Base query para aprobadores (mantener lógica anterior)
+    let query = `
       SELECT 
         r.id AS requisicion_id,
         r.nombre_solicitante,
@@ -362,27 +456,44 @@ app.get("/api/requisiciones/pendientes", authMiddleware, async (req, res) => {
         a.area AS area_aprobacion,
         a.rol_aprobador,
         a.nombre_aprobador,
-        a.estado AS estado_aprobacion
+        a.estado AS estado_aprobacion,
+        a.orden,
+        a.visible
       FROM requisiciones r
-      INNER JOIN requisicion_aprobaciones a ON r.id = a.requisicion_id
-      WHERE a.nombre_aprobador = ? 
-        AND a.estado = 'pendiente'
-      ORDER BY r.fecha DESC
-      `,
-      [nombre]
-    );
+      INNER JOIN requisicion_aprobaciones a 
+        ON r.id = a.requisicion_id
+      WHERE a.estado = 'pendiente'
+    `;
 
-    // Si no tiene requisiciones pendientes
-    if (requisiciones.length === 0) {
-      return res.json([]);
+    const params = [];
+
+    if (cargo !== "gerGeneral") {
+      query += " AND a.rol_aprobador = ? AND a.area = ?";
+      params.push(cargo, area);
     }
 
-    // Traer los productos asociados a cada requisición
-    const ids = requisiciones.map(r => r.requisicion_id);
+    query += " ORDER BY r.fecha DESC";
+
+    const [requisiciones] = await pool.query(query, params);
+
+    // DEDUPLICAR por requisicion_id para evitar duplicados en dashboard
+    const uniqueMap = new Map();
+    for (const r of requisiciones) {
+      if (!uniqueMap.has(r.requisicion_id)) {
+        uniqueMap.set(r.requisicion_id, r);
+      }
+    }
+    const uniqueRequisiciones = Array.from(uniqueMap.values());
+
+    if (uniqueRequisiciones.length === 0) return res.json([]);
+
+    const ids = uniqueRequisiciones.map((r) => r.requisicion_id);
+
+    // Obtener sólo items no rechazados
     const [productos] = await pool.query(
       `
       SELECT 
-        id AS producto_id,
+        id,
         requisicion_id,
         nombre,
         descripcion,
@@ -392,15 +503,14 @@ app.get("/api/requisiciones/pendientes", authMiddleware, async (req, res) => {
         ergonomico,
         aprobado
       FROM requisicion_productos
-      WHERE requisicion_id IN (?)
+      WHERE requisicion_id IN (?) AND (aprobado IS NULL OR aprobado != 'rechazado')
       `,
       [ids]
     );
 
-    // Agrupar los productos dentro de cada requisición
-    const resultado = requisiciones.map(req => ({
+    const resultado = uniqueRequisiciones.map((req) => ({
       ...req,
-      productos: productos.filter(p => p.requisicion_id === req.requisicion_id),
+      productos: productos.filter((p) => p.requisicion_id === req.requisicion_id),
     }));
 
     res.json(resultado);
@@ -410,6 +520,157 @@ app.get("/api/requisiciones/pendientes", authMiddleware, async (req, res) => {
   }
 });
 
+
+// Obtener detalles de una requisición por ID
+app.get("/api/requisiciones/:id", authMiddleware, async (req, res) => {
+  try {
+    const { id } = req.params;
+
+    const [requisiciones] = await pool.query(
+      `
+      SELECT id, nombre_solicitante, fecha, justificacion, area, sede, urgencia, presupuestada, valor_total
+      FROM requisiciones
+      WHERE id = ?
+      `,
+      [id]
+    );
+
+    if (requisiciones.length === 0) {
+      return res.status(404).json({ message: "Requisición no encontrada" });
+    }
+
+    // devolver solo items que NO fueron rechazados (rechazados deben desaparecer en siguientes aprobaciones)
+    const [productos] = await pool.query(
+      `
+      SELECT id, nombre, descripcion, cantidad, valor_estimado, compra_tecnologica, ergonomico, aprobado
+      FROM requisicion_productos
+      WHERE requisicion_id = ? AND (aprobado IS NULL OR aprobado != 'rechazado')
+      `,
+      [id]
+    );
+
+    // incluir datos del usuario actual (util para la UI)
+    const currentUser = {
+      id: req.user.id,
+      nombre: req.user.nombre,
+      cargo: req.user.cargo,
+      area: req.user.area,
+    };
+
+    res.json({ requisicion: requisiciones[0], productos, currentUser });
+  } catch (error) {
+    console.error("❌ Error al obtener detalles de requisición:", error);
+    res.status(500).json({ message: "Error al obtener detalles" });
+  }
+});
+
+app.put("/api/requisiciones/:id/aprobar-items", authMiddleware, async (req, res) => {
+  try {
+    const { id } = req.params; // ID de la requisición
+    const { decisiones } = req.body;
+    const { nombre, area } = req.user;
+
+    if (!Array.isArray(decisiones)) {
+      return res.status(400).json({ message: "Formato inválido" });
+    }
+
+    // 1️⃣ Actualizar estado de cada producto (aprobado/rechazado)
+    for (const { id: productoId, aprobado } of decisiones) {
+      await pool.query(
+        `
+        UPDATE requisicion_productos
+        SET aprobado = ?
+        WHERE id = ? AND requisicion_id = ?
+        `,
+        [aprobado ? "aprobado" : "rechazado", productoId, id]
+      );
+    }
+
+    // 2️⃣ Calcular nuevo valor total SOLO con productos aprobados
+    const [rows] = await pool.query(
+      `
+      SELECT SUM(valor_estimado * cantidad) AS nuevo_total
+      FROM requisicion_productos
+      WHERE requisicion_id = ? AND aprobado = 'aprobado'
+      `,
+      [id]
+    );
+
+    const nuevoTotal = rows[0]?.nuevo_total || 0;
+
+    // 3️⃣ Actualizar el valor total de la requisición
+    await pool.query(
+      `
+      UPDATE requisiciones
+      SET valor_total = ?
+      WHERE id = ?
+      `,
+      [nuevoTotal, id]
+    );
+
+    // 4️⃣ Marcar la aprobación del usuario actual como completada
+    const [result] = await pool.query(
+      `
+      UPDATE requisicion_aprobaciones
+      SET estado = 'aprobada', visible = FALSE
+      WHERE requisicion_id = ? AND nombre_aprobador = ? AND area = ?
+      `,
+      [id, nombre, area]
+    );
+
+    if (result.affectedRows === 0) {
+      return res.status(404).json({ message: "No se encontró aprobación correspondiente al usuario actual." });
+    }
+
+    // 5️⃣ Obtener el orden del aprobador actual
+    const [actual] = await pool.query(
+      `
+      SELECT orden
+      FROM requisicion_aprobaciones
+      WHERE requisicion_id = ? AND nombre_aprobador = ? AND area = ?
+      `,
+      [id, nombre, area]
+    );
+
+    const ordenActual = actual[0]?.orden;
+
+    if (ordenActual) {
+      // 6️⃣ Activar (hacer visible) al siguiente aprobador
+      await pool.query(
+        `
+        UPDATE requisicion_aprobaciones
+        SET visible = TRUE
+        WHERE requisicion_id = ? AND orden = ?
+        `,
+        [id, ordenActual + 1]
+      );
+    }
+
+    // 7️⃣ Verificar si quedan aprobaciones pendientes; si no quedan, marcar la requisición como 'aprobada'
+    const [pendientesRows] = await pool.query(
+      `SELECT COUNT(*) AS cnt FROM requisicion_aprobaciones WHERE requisicion_id = ? AND estado = 'pendiente'`,
+      [id]
+    );
+    const pendientesCount = pendientesRows[0]?.cnt || 0;
+    if (pendientesCount === 0) {
+      await pool.query(
+        `UPDATE requisiciones SET status = 'aprobada' WHERE id = ?`,
+        [id]
+      );
+    }
+
+    console.log("ID a aprobar:", id);
+
+    res.json({
+      message: `✅ Aprobación registrada. Se activó el siguiente aprobador (orden ${ordenActual ? ordenActual + 1 : "final"}).`,
+      nuevo_total: nuevoTotal,
+      pendientes: pendientesCount
+    });
+  } catch (error) {
+    console.error("❌ Error al aprobar ítems:", error);
+    res.status(500).json({ message: "Error al aprobar ítems" });
+  }
+});
 
 //FORMULARIOS
 app.put("/formularios/:id", async (req, res) => {
@@ -886,3 +1147,164 @@ camunda.client.auth.client-secret=25rj2O8VEIiVH6MlQcbkn2RJr22tbUGeUzYpbX1tTSLmYU
 camunda.client.cloud.cluster-id=9678cfa5-01e6-43a6-9d0d-b418d1a331b7
 camunda.client.cloud.region=jfk-1
 */
+
+// NUEVO: endpoint para obtener listas de áreas y sedes desde la BD
+app.get("/api/meta", async (req, res) => {
+  try {
+    const [areasRows] = await pool.query(
+      `SELECT DISTINCT area FROM user WHERE area IS NOT NULL AND area != ''`
+    );
+    const [sedesRows] = await pool.query(
+      `SELECT DISTINCT sede FROM user WHERE sede IS NOT NULL AND sede != ''`
+    );
+
+    const areas = areasRows.map((r) => r.area);
+    const sedes = sedesRows.map((r) => r.sede);
+
+    res.json({ areas, sedes });
+  } catch (err) {
+    console.error("❌ Error al obtener meta (areas/sedes):", err);
+    res.status(500).json({ error: "Error al obtener áreas y sedes" });
+  }
+});
+
+// NUEVO: obtener todas las requisiciones
+app.get("/api/requisiciones", authMiddleware, async (req, res) => {
+  try {
+    const [rows] = await pool.query(
+      `SELECT id AS requisicion_id, nombre_solicitante, fecha, justificacion, area, sede, urgencia, presupuestada, valor_total, status
+       FROM requisiciones
+       ORDER BY fecha DESC`
+    );
+    res.json(rows);
+  } catch (err) {
+    console.error("❌ Error al obtener todas las requisiciones:", err);
+    res.status(500).json({ error: "Error al obtener requisiciones" });
+  }
+});
+
+// NUEVO: eliminar una requisición (y sus items / aprobaciones)
+app.delete("/api/requisiciones/:id", authMiddleware, async (req, res) => {
+  try {
+    const { id } = req.params;
+    await pool.query("DELETE FROM requisicion_productos WHERE requisicion_id = ?", [id]);
+    await pool.query("DELETE FROM requisicion_aprobaciones WHERE requisicion_id = ?", [id]);
+    const [result] = await pool.query("DELETE FROM requisiciones WHERE id = ?", [id]);
+    if (result.affectedRows === 0) return res.status(404).json({ message: "Requisición no encontrada" });
+    res.json({ message: "Requisición eliminada correctamente" });
+  } catch (err) {
+    console.error("❌ Error al eliminar requisición:", err);
+    res.status(500).json({ error: "Error al eliminar requisión" });
+  }
+});
+
+// NUEVO: actualizar campos básicos de una requisición
+app.put("/api/requisiciones/:id", authMiddleware, async (req, res) => {
+  try {
+    const { id } = req.params;
+    const { nombre_solicitante, fecha, justificacion, area, sede, urgencia, presupuestada } = req.body;
+    await pool.query(
+      `UPDATE requisiciones SET nombre_solicitante=?, fecha=?, justificacion=?, area=?, sede=?, urgencia=?, presupuestada=? WHERE id=?`,
+      [nombre_solicitante, fecha, justificacion, area, sede, urgencia, presupuestada ? 1 : 0, id]
+    );
+    res.json({ message: "Requisición actualizada correctamente" });
+  } catch (err) {
+    console.error("❌ Error al actualizar requisición:", err);
+    res.status(500).json({ error: "Error al actualizar requisición" });
+  }
+});
+
+// NUEVO: generar Excel sencillo para una requisición
+app.get("/api/requisiciones/:id/excel", authMiddleware, async (req, res) => {
+  try {
+    const { id } = req.params;
+    const [reqRows] = await pool.query(
+      `SELECT id, nombre_solicitante, fecha, justificacion, area, sede, urgencia, valor_total FROM requisiciones WHERE id = ?`,
+      [id]
+    );
+    if (reqRows.length === 0) return res.status(404).json({ error: "No encontrado" });
+    const requisicion = reqRows[0];
+
+    const [productos] = await pool.query(
+      `SELECT nombre, descripcion, cantidad, valor_estimado, compra_tecnologica, ergonomico FROM requisicion_productos WHERE requisicion_id = ?`,
+      [id]
+    );
+
+    const workbook = new ExcelJS.Workbook();
+    const sheet = workbook.addWorksheet("Requisicion");
+
+    sheet.addRow(["ID", requisicion.id]);
+    sheet.addRow(["Solicitante", requisicion.nombre_solicitante]);
+    sheet.addRow(["Fecha", requisicion.fecha]);
+    sheet.addRow(["Area", requisicion.area]);
+    sheet.addRow(["Sede", requisicion.sede]);
+    sheet.addRow(["Urgencia", requisicion.urgencia]);
+    sheet.addRow(["Valor total", requisicion.valor_total]);
+    sheet.addRow([]);
+    sheet.addRow(["#", "Producto", "Descripcion", "Cantidad", "Valor estimado", "Tecnologico", "Ergonomico"]);
+
+    productos.forEach((p, idx) => {
+      sheet.addRow([
+        idx + 1,
+        p.nombre,
+        p.descripcion,
+        p.cantidad,
+        p.valor_estimado,
+        p.compraTecnologica ? "Sí" : "No",
+        p.ergonomico ? "Sí" : "No",
+      ]);
+    });
+
+    res.setHeader("Content-Type", "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet");
+    res.setHeader("Content-Disposition", `attachment; filename=requisicion_${id}.xlsx`);
+    await workbook.xlsx.write(res);
+    res.end();
+  } catch (err) {
+    console.error("❌ Error generar Excel requisición:", err);
+    res.status(500).json({ error: "Error al generar Excel" });
+  }
+});
+
+// NUEVO: generar "Word" (HTML con content-type msword) para abrir en Word
+app.get("/api/requisiciones/:id/word", authMiddleware, async (req, res) => {
+  try {
+    const { id } = req.params;
+    const [reqRows] = await pool.query(
+      `SELECT id, nombre_solicitante, fecha, justificacion, area, sede, urgencia, valor_total FROM requisiciones WHERE id = ?`,
+      [id]
+    );
+    if (reqRows.length === 0) return res.status(404).json({ error: "No encontrado" });
+    const requisicion = reqRows[0];
+
+    const [productos] = await pool.query(
+      `SELECT nombre, descripcion, cantidad, valor_estimado FROM requisicion_productos WHERE requisicion_id = ?`,
+      [id]
+    );
+
+    const html = `
+      <html><head><meta charset="utf-8"></head><body>
+      <h1>Requisición #${requisicion.id}</h1>
+      <p><strong>Solicitante:</strong> ${requisicion.nombre_solicitante}</p>
+      <p><strong>Fecha:</strong> ${requisicion.fecha}</p>
+      <p><strong>Area:</strong> ${requisicion.area}</p>
+      <p><strong>Sede:</strong> ${requisicion.sede}</p>
+      <p><strong>Urgencia:</strong> ${requisicion.urgencia}</p>
+      <p><strong>Valor total:</strong> ${requisicion.valor_total}</p>
+      <h2>Productos</h2>
+      <table border="1" cellspacing="0" cellpadding="4">
+        <thead><tr><th>#</th><th>Producto</th><th>Descripcion</th><th>Cantidad</th><th>Valor estimado</th></tr></thead>
+        <tbody>
+        ${productos.map((p, i) => `<tr><td>${i + 1}</td><td>${p.nombre}</td><td>${p.descripcion}</td><td>${p.cantidad}</td><td>${p.valor_estimado}</td></tr>`).join("")}
+        </tbody>
+      </table>
+      </body></html>
+    `;
+
+    res.setHeader("Content-Type", "application/msword");
+    res.setHeader("Content-Disposition", `attachment; filename=requisicion_${id}.doc`);
+    res.send(html);
+  } catch (err) {
+    console.error("❌ Error generar Word requisición:", err);
+    res.status(500).json({ error: "Error al generar Word" });
+  }
+});
