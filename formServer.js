@@ -9,13 +9,14 @@ import ExcelJS from "exceljs";
 import axios from 'axios';
 import bcrypt from 'bcrypt';
 import jwt from 'jsonwebtoken';
+import { exec } from "child_process";
 import cookieParser from "cookie-parser";
 import { fileURLToPath } from "url";
+import ConvertAPI from "convertapi";
 dotenv.config();
 const port = process.env.PORT || 4000;
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
-
 const app = express();
 app.use(express.json());
 app.use(bodyParser.json());
@@ -169,7 +170,7 @@ app.post('/api/auth/logout', (req, res) => {
 app.get('/api/auth/me', authMiddleware, async (req, res) => {
   // req.user fue seteado por authMiddleware
   try {
-    const [rows] = await pool.execute('SELECT id, correo, nombre, cargo, area, sede FROM user WHERE id = ?', [req.user.id]);
+    const [rows] = await pool.execute('SELECT id, correo, nombre, cargo, area, sede, super_admin, aprobador, solicitante, comprador FROM user WHERE id = ?', [req.user.id]);
     const user = rows[0];
     if (!user) return res.status(404).json({ message: 'User not found' });
     res.json(user);
@@ -266,7 +267,7 @@ app.post("/api/requisicion/create", async (req, res) => {
       return res.status(400).json({ message: "Datos incompletos en la solicitud" });
     }
 
-    const { nombre, fecha, justificacion, area, sede, urgencia, presupuestada } = solicitante;
+    const { nombre, fecha, fechaRequeridoEntrega, tiempoAproximadoGestion, justificacion, area, sede, urgencia, presupuestada } = solicitante;
 
     // 1️⃣ Calcular valor total
     const valorTotal = productos.reduce(
@@ -277,9 +278,9 @@ app.post("/api/requisicion/create", async (req, res) => {
     // 2️⃣ Insertar la requisición (ahora incluye status)
     const [reqResult] = await pool.query(
       `INSERT INTO requisiciones 
-       (nombre_solicitante, fecha, justificacion, area, sede, urgencia, presupuestada, valor_total, status) 
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-      [nombre, fecha, justificacion, area, sede, urgencia, presupuestada, valorTotal, 'pendiente']
+       (nombre_solicitante, fecha, fecha_requerido_entrega, tiempoAproximadoGestion, justificacion, area, sede, urgencia, presupuestada, valor_total, status) 
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      [nombre, fecha, fechaRequeridoEntrega, tiempoAproximadoGestion, justificacion, area, sede, urgencia, presupuestada, valorTotal, 'pendiente']
     );
 
     const requisicionId = reqResult.insertId;
@@ -386,7 +387,8 @@ app.get("/api/requisiciones/pendientes", authMiddleware, async (req, res) => {
           sede,
           urgencia,
           presupuestada,
-          valor_total
+          valor_total,
+          status
         FROM requisiciones
         WHERE nombre_solicitante = ?
         ORDER BY fecha DESC
@@ -452,6 +454,7 @@ app.get("/api/requisiciones/pendientes", authMiddleware, async (req, res) => {
         r.urgencia,
         r.presupuestada,
         r.valor_total,
+        r.status,
         a.id AS aprobacion_id,
         a.area AS area_aprobacion,
         a.rol_aprobador,
@@ -528,7 +531,7 @@ app.get("/api/requisiciones/:id", authMiddleware, async (req, res) => {
 
     const [requisiciones] = await pool.query(
       `
-      SELECT id, nombre_solicitante, fecha, justificacion, area, sede, urgencia, presupuestada, valor_total
+      SELECT id, nombre_solicitante, fecha, justificacion, area, sede, urgencia, presupuestada, valor_total, status
       FROM requisiciones
       WHERE id = ?
       `,
@@ -557,10 +560,25 @@ app.get("/api/requisiciones/:id", authMiddleware, async (req, res) => {
       area: req.user.area,
     };
 
-    res.json({ requisicion: requisiciones[0], productos, currentUser });
+    // Obtener progreso de aprobación (nuevo)
+    const approvalProgress = await getApprovalProgress(id);
+
+    res.json({ requisicion: requisiciones[0], productos, currentUser, approvalProgress });
   } catch (error) {
     console.error("❌ Error al obtener detalles de requisición:", error);
     res.status(500).json({ message: "Error al obtener detalles" });
+  }
+});
+
+// NUEVO endpoint: obtener sólo el estado/progreso de aprobación de una requisición
+app.get("/api/requisiciones/:id/aprobacion", authMiddleware, async (req, res) => {
+  try {
+    const { id } = req.params;
+    const progress = await getApprovalProgress(id);
+    res.json(progress);
+  } catch (err) {
+    console.error("❌ Error al obtener progreso de aprobación:", err);
+    res.status(500).json({ error: "Error al obtener progreso de aprobación" });
   }
 });
 
@@ -662,7 +680,7 @@ app.put("/api/requisiciones/:id/aprobar-items", authMiddleware, async (req, res)
     console.log("ID a aprobar:", id);
 
     res.json({
-      message: `✅ Aprobación registrada. Se activó el siguiente aprobador (orden ${ordenActual ? ordenActual + 1 : "final"}).`,
+      message: `Aprobación registrada. Se activó el siguiente aprobador.`,
       nuevo_total: nuevoTotal,
       pendientes: pendientesCount
     });
@@ -866,8 +884,14 @@ app.delete("/formularios/:id", async (req, res) => {
   }
 });
 
-app.get("/formularios/:id/excel", async (req, res) => {
+app.get("/requisiciones/:id/excel", async (req, res) => {
   try {
+    const tempDir = path.join(__dirname, "temp");
+
+    if (!fs.existsSync(tempDir)) {
+      fs.mkdirSync(tempDir);
+    }
+
     const { id } = req.params;
     const plantillaPath = path.join(__dirname, "templates", "plantilla.xlsx");
     console.log("Intentando leer plantilla en:", plantillaPath);
@@ -877,121 +901,387 @@ app.get("/formularios/:id/excel", async (req, res) => {
       return res.status(500).json({ error: "Plantilla no encontrada" });
     }
 
-    const [formRows] = await pool.query("SELECT * FROM formularios WHERE id = ?", [id]);
-    if (formRows.length === 0) return res.status(404).json({ error: "No encontrado" });
-    const form = formRows[0];
+    console.log("📥 ID recibido:", id);
+    console.log("📂 Plantilla existe:", fs.existsSync(plantillaPath));
 
-    const [itemsRows] = await pool.query("SELECT * FROM items_formulario WHERE formulario_id = ?", [id]);
+    // 🧩 Cambiamos tabla: requisiciones.requisiciones
+    const [reqRows] = await pool.query(
+      "SELECT * FROM requisiciones.requisiciones WHERE id = ?",
+      [id]
+    );
+    console.log("📦 Requisiciones encontradas:", reqRows.length);
+
+    if (reqRows.length === 0)
+      return res.status(404).json({ error: "Requisición no encontrada" });
+
+    const requisicion = reqRows[0];
+
+    // 🧩 Cambiamos tabla: requisiciones.requisicion_productos
+    const [productosRows] = await pool.query(
+      "SELECT * FROM requisiciones.requisicion_productos WHERE requisicion_id = ?",
+      [id]
+    );
 
     const workbook = new ExcelJS.Workbook();
     await workbook.xlsx.readFile(plantillaPath);
-    console.log("✅ Plantilla Excel cargada correctamente");
     const worksheet = workbook.getWorksheet("F-SGA-SG-19");
 
-    worksheet.getCell("E7").value = form.nombre;
-    worksheet.getCell("E8").value = form.fechaSolicitud;
-    worksheet.getCell("E9").value = form.fechaEntrega;
-    worksheet.getCell("E10").value = form.justificacion;
-    worksheet.getCell("O7").value = form.area;
-    worksheet.getCell("O8").value = form.sede;
-    worksheet.getCell("K9").value = form.urgenciaCompra;
-    worksheet.getCell("T9").value = form.tiempoGestion;
-    worksheet.getCell("T10").value = form.anexos;
+    // 🔹 Cabecera general (usar "N/A" si falta)
+    worksheet.getCell("E7").value = requisicion.nombre_solicitante || "N/A";
+    worksheet.getCell("E8").value = requisicion.fecha || "N/A";
+    worksheet.getCell("E9").value = requisicion.fecha_requerido_entrega || "N/A";
+    worksheet.getCell("E10").value = requisicion.justificacion || "N/A";
+    worksheet.getCell("O7").value = requisicion.area || "N/A";
+    worksheet.getCell("O8").value = requisicion.sede || "N/A";
+    worksheet.getCell("K9").value = requisicion.urgencia || "N/A";
+    worksheet.getCell("T10").value = (typeof requisicion.presupuestada !== "undefined") ? (requisicion.presupuestada ? "Sí" : "No") : "N/A";
+    worksheet.getCell("T9").value = requisicion.tiempoAproximadoGestion || "N/A";
 
-    worksheet.getCell("D31").value = form.nombreSolicitante;
-    worksheet.getCell("D32").value = form.firmaSolicitante;
+    worksheet.getCell("T9").value = requisicion.nombre_solicitante || "N/A";
 
-    worksheet.getCell("J31").value = form.nombreAdministrativo;
-    worksheet.getCell("J32").value = form.firmaAdministrativo;
+    // REMOVIDO: ya no rellenamos D28/D29/D34/D35 con el solicitante directamente
+    // ...existing code...
 
-    worksheet.getCell("Q31").value = form.nombreGerente;
-    worksheet.getCell("Q32").value = form.firmaGerente;
-
-    worksheet.getCell("B36").value = form.autorizacionGerencia;
-    worksheet.getCell("P36").value = form.firmaCompras;
-
-
-    function parseCurrencyToNumber(value) {
+    // 🔹 Formato numérico
+    const parseCurrencyToNumber = (value) => {
       if (value == null) return NaN;
       const str = String(value).trim();
-      if (str === '') return NaN;
+      if (str === "") return NaN;
+      return Number(str.replace(/[^\d.-]/g, ""));
+    };
 
-
-      const lastDot = str.lastIndexOf('.');
-      const lastComma = str.lastIndexOf(',');
-
-      if (lastComma > -1 && lastDot > -1) {
-        if (lastComma > lastDot) {
-          return Number(str.replace(/\./g, '').replace(/,/g, '.'));
-        } else {
-          return Number(str.replace(/,/g, ''));
-        }
-      } else if (lastComma > -1) {
-        return Number(str.replace(/\./g, '').replace(/,/g, '.'));
-      } else {
-        return Number(str.replace(/,/g, ''));
-      }
-    }
-
+    // 🔹 Productos (igual que antes)
     const startRow = 14;
-
-    itemsRows.forEach((item, idx) => {
+    productosRows.forEach((item, idx) => {
       const row = worksheet.getRow(startRow + idx);
-
       row.getCell(2).value = idx + 1;
-      row.getCell(3).value = item.productoOServicio;
-      row.getCell(6).value = (item.cantidad !== undefined && item.cantidad !== null) ? Number(item.cantidad) : '';
-      row.getCell(7).value = item.centro || '';
-      row.getCell(8).value = item.cuenta || '';
-
-      const purchaseAprobated =
-        item.purchaseAprobated === 1 ||
-        item.purchaseAprobated === true ||
-        String(item.purchaseAprobated).toLowerCase().includes('si') ||
-        String(item.purchaseAprobated).toLowerCase().includes('sí') ||
-        String(item.purchaseAprobated).toLowerCase().includes('aprob');
-      row.getCell(10).value = purchaseAprobated ? 'Sí' : 'No';
-
-      const rawValor = item.valor;
-      const valorNum = parseCurrencyToNumber(rawValor);
-      const cellValor = row.getCell(12);
-      if (!isNaN(valorNum)) {
-        cellValor.value = valorNum;
-        cellValor.numFmt = '"$"#,##0.00';
-      } else {
-        cellValor.value = rawValor || '';
-      }
-
-      row.getCell(13).value = item.descripcion || '';
-
-      const vobo =
-        item.vobo === 1 ||
-        item.vobo === true ||
-        String(item.vobo).toLowerCase().includes('si') ||
-        String(item.vobo).toLowerCase().includes('sí') ||
-        String(item.vobo).toLowerCase().includes('aprob');
-      row.getCell(14).value = vobo ? 'Sí' : 'No';
-
-      const sstAprobacion =
-        item.sstAprobacion === 1 ||
-        item.sstAprobacion === true ||
-        String(item.sstAprobacion).toLowerCase().includes('si') ||
-        String(item.sstAprobacion).toLowerCase().includes('sí') ||
-        String(item.sstAprobacion).toLowerCase().includes('aprob');
-      row.getCell(17).value = sstAprobacion ? 'Sí' : 'No';
-
+      row.getCell(3).value = item.nombre || "N/A";
+      row.getCell(6).value =
+        item.cantidad !== undefined && item.cantidad !== null
+          ? Number(item.cantidad)
+          : "";
+      row.getCell(7).value = item.centro_costo || "N/A";
+      row.getCell(8).value = item.cuenta_contable || "N/A";
+      row.getCell(12).value = parseCurrencyToNumber(item.valor_estimado) || 0;
+      row.getCell(10).value = requisicion.presupuestada ? "Sí" : "No";
+      row.getCell(13).value = item.descripcion || "N/A";
+      row.getCell(14).value = item.compra_tecnologica ? "Sí Aplica" : "No Aplica";
+      row.getCell(17).value = item.ergonomico ? "Sí Aplica" : "No Aplica";
       row.commit();
     });
 
-    res.setHeader("Content-Type", "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet");
-    res.setHeader("Content-Disposition", `attachment; filename=formulario_${id}.xlsx`);
-    await workbook.xlsx.write(res);
-    res.end();
+    // --- NUEVA LÓGICA DE APROBACIONES (UNA SOLA FILA: 28 nombres / 29 firmas) ---
+    try {
+      // 1) Obtener área real del solicitante (buscar user por nombre)
+      const [userRows] = await pool.query(
+        "SELECT area FROM user WHERE nombre = ? LIMIT 1",
+        [requisicion.nombre_solicitante]
+      );
+      const solicitanteArea = (userRows[0]?.area || requisicion.area || "").toString().toUpperCase();
+
+      // 2) Detectar flags en productos
+      const hasTecnologico = productosRows.some(p => !!(p.compra_tecnologica || p.compraTecnologica));
+      const hasErgonomico = productosRows.some(p => !!(p.ergonomico));
+
+      // 3) Calcular roles necesarios (director / gerente) según reglas
+      // director = dicSST o dicTYP (según solicitante)
+      // gerente   = gerSST o gerTyC (según flags)
+      const rolesNeeded = new Set();
+
+      if (solicitanteArea.includes("SST")) {
+        rolesNeeded.add("dicSST");
+      } else if (solicitanteArea.includes("TYP")) {
+        rolesNeeded.add("dicTYP");
+      }
+
+      if (hasTecnologico) rolesNeeded.add("gerTyC");
+      // ergonomía: si solicitante TYP -> gerTyC + dicSST + dicTYP (según regla solicitada)
+      if (hasErgonomico) {
+        if (solicitanteArea.includes("TYP")) {
+          rolesNeeded.add("gerTyC");
+          rolesNeeded.add("dicSST");
+          rolesNeeded.add("dicTYP"); // asegurar director TYP presente
+        } else {
+          rolesNeeded.add("gerSST");
+        }
+      }
+
+      // 4) Leer nombres reales de la tabla user para esos cargos
+      const rolesArray = Array.from(rolesNeeded);
+      const usuariosPorCargo = {};
+      if (rolesArray.length > 0) {
+        const [usuarios] = await pool.query(
+          `SELECT nombre, cargo FROM user WHERE cargo IN (?)`,
+          [rolesArray]
+        );
+        usuarios.forEach(u => { usuariosPorCargo[u.cargo] = u.nombre; });
+      }
+
+      // 5) Limpiar las celdas de la única tabla (fila 28 nombres, fila 29 firmas)
+      const nameCells = ['D28', 'K28', 'R28']; // solicitante, director, gerente
+      const sigCells = ['D29', 'K29', 'R29'];
+      [...nameCells, ...sigCells].forEach(c => worksheet.getCell(c).value = "");
+
+      // 6) Escribir solicitante en D28 (siempre)
+      worksheet.getCell('D28').value = requisicion.nombre_solicitante || "N/A";
+      worksheet.getCell('D29').value = ""; // firma solicitante (vacía)
+
+      // 7) Escribir director en K28 (prefiere dicSST si ambos existen por regla; si no, dicTYP)
+      // Si existen ambos directores (dicTYP y dicSST) mostrarlos en la misma celda separados por " / "
+      const directorParts = [];
+      if (usuariosPorCargo['dicTYP']) directorParts.push(usuariosPorCargo['dicTYP']);
+      if (usuariosPorCargo['dicSST']) directorParts.push(usuariosPorCargo['dicSST']);
+      worksheet.getCell('K28').value = directorParts.length > 0 ? directorParts.join(' / ') : "N/A";
+      worksheet.getCell('K29').value = ""; // firma director
+
+      // 8) Escribir gerente en R28 (preferir gerSST si ergonomico; gerTyC si tecnologico or role present)
+      // lógica simple: si gerSST existe y se pidió, usarlo; else gerTyC
+      const gerenteName =
+        usuariosPorCargo['gerSST'] ||
+        usuariosPorCargo['gerTyC'] ||
+        null;
+      worksheet.getCell('R28').value = gerenteName || "N/A";
+      worksheet.getCell('R29').value = ""; // firma gerente
+
+      // nota: si algún rol no fue encontrado en la BD se deja "N/A"
+    } catch (err) {
+      console.warn("⚠️ Error calculando/aplicando aprobaciones en Excel (tabla única):", err);
+    }
+
+    // 🔹 Guardar el Excel (igual que antes)
+    // 📁 Ruta del archivo temporal
+    const excelPath = path.join(tempDir, `requisicion_${id}.xlsx`);
+
+    // 💾 Guardar el archivo Excel
+    await workbook.xlsx.writeFile(excelPath);
+
+    // 📤 Enviar el archivo al cliente
+    res.download(excelPath, `requisicion_${id}.xlsx`, (err) => {
+      if (err) {
+        console.error("❌ Error al enviar el archivo:", err);
+        res.status(500).json({ error: "Error al enviar el archivo" });
+      } else {
+        console.log("✅ Archivo enviado correctamente");
+        // 🧹 (Opcional) eliminar el archivo después de enviarlo
+        fs.unlink(excelPath, (unlinkErr) => {
+          if (unlinkErr) console.warn("⚠️ No se pudo borrar el archivo temporal:", unlinkErr);
+        });
+      }
+    });
   } catch (err) {
     console.error("❌ Error al generar Excel:", err);
     res.status(500).json({ error: "Error al generar Excel" });
   }
 });
+
+app.get("/requisiciones/:id/pdf", async (req, res) => {
+  try {
+    const { id } = req.params;
+    const tempDir = path.join(__dirname, "temp");
+    if (!fs.existsSync(tempDir)) fs.mkdirSync(tempDir);
+
+    const plantillaPath = path.join(__dirname, "templates", "plantilla.xlsx");
+    const excelTemp = path.join(tempDir, `requisicion_${id}.xlsx`);
+    const pdfTemp = path.join(tempDir, `requisicion_${id}.pdf`);
+
+    const [reqRows] = await pool.query(
+      "SELECT * FROM requisiciones.requisiciones WHERE id = ?",
+      [id]
+    );
+    console.log("📦 Requisiciones encontradas:", reqRows.length);
+
+    if (reqRows.length === 0)
+      return res.status(404).json({ error: "Requisición no encontrada" });
+
+    const requisicion = reqRows[0];
+
+    // 🧩 Cambiamos tabla: requisiciones.requisicion_productos
+    const [productosRows] = await pool.query(
+      "SELECT * FROM requisiciones.requisicion_productos WHERE requisicion_id = ?",
+      [id]
+    );
+
+    const workbook = new ExcelJS.Workbook();
+    await workbook.xlsx.readFile(plantillaPath);
+    const worksheet = workbook.getWorksheet("F-SGA-SG-19");
+
+    // 🔹 Cabecera general (usar "N/A" si falta)
+    worksheet.getCell("E7").value = requisicion.nombre_solicitante || "N/A";
+    worksheet.getCell("E8").value = requisicion.fecha || "N/A";
+    worksheet.getCell("E9").value = requisicion.fecha_requerido_entrega || "N/A";
+    worksheet.getCell("E10").value = requisicion.justificacion || "N/A";
+    worksheet.getCell("O7").value = requisicion.area || "N/A";
+    worksheet.getCell("O8").value = requisicion.sede || "N/A";
+    worksheet.getCell("K9").value = requisicion.urgencia || "N/A";
+    worksheet.getCell("T10").value = (typeof requisicion.presupuestada !== "undefined") ? (requisicion.presupuestada ? "Sí" : "No") : "N/A";
+    worksheet.getCell("T9").value = requisicion.tiempoAproximadoGestion || "N/A";
+
+    worksheet.getCell("T9").value = requisicion.nombre_solicitante || "N/A";
+
+    // REMOVIDO: ya no rellenamos D28/D29/D34/D35 con el solicitante directamente
+    // ...existing code...
+
+    // 🔹 Formato numérico
+    const parseCurrencyToNumber = (value) => {
+      if (value == null) return NaN;
+      const str = String(value).trim();
+      if (str === "") return NaN;
+      return Number(str.replace(/[^\d.-]/g, ""));
+    };
+
+    // 🔹 Productos (igual que antes)
+    const startRow = 14;
+    productosRows.forEach((item, idx) => {
+      const row = worksheet.getRow(startRow + idx);
+      row.getCell(2).value = idx + 1;
+      row.getCell(3).value = item.nombre || "N/A";
+      row.getCell(6).value =
+        item.cantidad !== undefined && item.cantidad !== null
+          ? Number(item.cantidad)
+          : "";
+      row.getCell(7).value = item.centro_costo || "N/A";
+      row.getCell(8).value = item.cuenta_contable || "N/A";
+      row.getCell(12).value = parseCurrencyToNumber(item.valor_estimado) || 0;
+      row.getCell(10).value = requisicion.presupuestada ? "Sí" : "No";
+      row.getCell(13).value = item.descripcion || "N/A";
+      row.getCell(14).value = item.compra_tecnologica ? "Sí Aplica" : "No Aplica";
+      row.getCell(17).value = item.ergonomico ? "Sí Aplica" : "No Aplica";
+      row.commit();
+    });
+
+    // --- NUEVA LÓGICA DE APROBACIONES (UNA SOLA FILA: 28 nombres / 29 firmas) ---
+    try {
+      // 1) Obtener área real del solicitante (buscar user por nombre)
+      const [userRows] = await pool.query(
+        "SELECT area FROM user WHERE nombre = ? LIMIT 1",
+        [requisicion.nombre_solicitante]
+      );
+      const solicitanteArea = (userRows[0]?.area || requisicion.area || "").toString().toUpperCase();
+
+      // 2) Detectar flags en productos
+      const hasTecnologico = productosRows.some(p => !!(p.compra_tecnologica || p.compraTecnologica));
+      const hasErgonomico = productosRows.some(p => !!(p.ergonomico));
+
+      // 3) Calcular roles necesarios (director / gerente) según reglas
+      // director = dicSST o dicTYP (según solicitante)
+      // gerente   = gerSST o gerTyC (según flags)
+      const rolesNeeded = new Set();
+
+      if (solicitanteArea.includes("SST")) {
+        rolesNeeded.add("dicSST");
+      } else if (solicitanteArea.includes("TYP")) {
+        rolesNeeded.add("dicTYP");
+      }
+
+      if (hasTecnologico) rolesNeeded.add("gerTyC");
+      // ergonomía: si solicitante TYP -> gerTyC + dicSST + dicTYP (según regla solicitada)
+      if (hasErgonomico) {
+        if (solicitanteArea.includes("TYP")) {
+          rolesNeeded.add("gerTyC");
+          rolesNeeded.add("dicSST");
+          rolesNeeded.add("dicTYP"); // asegurar director TYP presente
+        } else {
+          rolesNeeded.add("gerSST");
+        }
+      }
+
+      // 4) Leer nombres reales de la tabla user para esos cargos
+      const rolesArray = Array.from(rolesNeeded);
+      const usuariosPorCargo = {};
+      if (rolesArray.length > 0) {
+        const [usuarios] = await pool.query(
+          `SELECT nombre, cargo FROM user WHERE cargo IN (?)`,
+          [rolesArray]
+        );
+        usuarios.forEach(u => { usuariosPorCargo[u.cargo] = u.nombre; });
+      }
+
+      // 5) Limpiar las celdas de la única tabla (fila 28 nombres, fila 29 firmas)
+      const nameCells = ['D28', 'K28', 'R28']; // solicitante, director, gerente
+      const sigCells = ['D29', 'K29', 'R29'];
+      [...nameCells, ...sigCells].forEach(c => worksheet.getCell(c).value = "");
+
+      // 6) Escribir solicitante en D28 (siempre)
+      worksheet.getCell('D28').value = requisicion.nombre_solicitante || "N/A";
+      worksheet.getCell('D29').value = ""; // firma solicitante (vacía)
+
+      // 7) Escribir director en K28 (prefiere dicSST si ambos existen por regla; si no, dicTYP)
+      // Si existen ambos directores (dicTYP y dicSST) mostrarlos en la misma celda separados por " / "
+      const directorParts = [];
+      if (usuariosPorCargo['dicTYP']) directorParts.push(usuariosPorCargo['dicTYP']);
+      if (usuariosPorCargo['dicSST']) directorParts.push(usuariosPorCargo['dicSST']);
+      worksheet.getCell('K28').value = directorParts.length > 0 ? directorParts.join(' / ') : "N/A";
+      worksheet.getCell('K29').value = ""; // firma director
+
+      // 8) Escribir gerente en R28 (preferir gerSST si ergonomico; gerTyC si tecnologico or role present)
+      // lógica simple: si gerSST existe y se pidió, usarlo; else gerTyC
+      const gerenteName =
+        usuariosPorCargo['gerSST'] ||
+        usuariosPorCargo['gerTyC'] ||
+        null;
+      worksheet.getCell('R28').value = gerenteName || "N/A";
+      worksheet.getCell('R29').value = ""; // firma gerente
+
+      // nota: si algún rol no fue encontrado en la BD se deja "N/A"
+    } catch (err) {
+      console.warn("⚠️ Error calculando/aplicando aprobaciones en Excel (tabla única):", err);
+    }
+
+    // 🔹 Guardar el Excel (igual que antes)
+    res.setHeader(
+      "Content-Type",
+      "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+    );
+    res.setHeader(
+      "Content-Disposition",
+      `attachment; filename=requisicion_${id}.xlsx`
+    );
+    await workbook.xlsx.writeFile(excelTemp);
+
+    await convertExcelToPdfConvertAPI(excelTemp, pdfTemp);
+
+    // 3️⃣ Enviar el PDF al cliente
+    res.setHeader("Content-Type", "application/pdf");
+    res.setHeader(
+      "Content-Disposition",
+      `attachment; filename=requisicion_${id}.pdf`
+    );
+
+    const stream = fs.createReadStream(pdfTemp);
+    stream.pipe(res);
+    stream.on("close", async () => {
+      await Promise.allSettled([
+        fs.promises.unlink(excelTemp),
+        fs.promises.unlink(pdfTemp),
+      ]);
+    });
+  } catch (err) {
+    console.error("❌ Error al generar PDF:", err);
+    res.status(500).json({ error: "Error al generar PDF" });
+  }
+});
+
+async function convertExcelToPdfConvertAPI(inputPath, outputPath) {
+  try {
+    const convertapi = new ConvertAPI("8qdWu0Di8FQ0LeJfJVGjWGTruUXRO9cr"); // 🔑 Reemplaza con tu API Secret
+    console.log("🔄 Convirtiendo Excel a PDF con ConvertAPI...");
+
+    const result = await convertapi.convert("pdf", {
+      File: inputPath,
+      PageOrientation: "landscape",
+      PageSize: "A4",
+      Margins: "normal",
+    }, "xlsx");
+
+    // Guarda el PDF en disco
+    await result.file.save(outputPath);
+    console.log("✅ PDF generado correctamente en:", outputPath);
+    return true;
+  } catch (error) {
+    console.error("❌ Error general en la conversión:", error);
+    throw error;
+  }
+}
 
 
 app.put("/items/:id/aprobar", async (req, res) => {
@@ -1168,7 +1458,6 @@ app.get("/api/meta", async (req, res) => {
   }
 });
 
-// NUEVO: obtener todas las requisiciones
 app.get("/api/requisiciones", authMiddleware, async (req, res) => {
   try {
     const [rows] = await pool.query(
@@ -1183,7 +1472,6 @@ app.get("/api/requisiciones", authMiddleware, async (req, res) => {
   }
 });
 
-// NUEVO: eliminar una requisición (y sus items / aprobaciones)
 app.delete("/api/requisiciones/:id", authMiddleware, async (req, res) => {
   try {
     const { id } = req.params;
@@ -1198,7 +1486,6 @@ app.delete("/api/requisiciones/:id", authMiddleware, async (req, res) => {
   }
 });
 
-// NUEVO: actualizar campos básicos de una requisición
 app.put("/api/requisiciones/:id", authMiddleware, async (req, res) => {
   try {
     const { id } = req.params;
@@ -1214,7 +1501,6 @@ app.put("/api/requisiciones/:id", authMiddleware, async (req, res) => {
   }
 });
 
-// NUEVO: generar Excel sencillo para una requisición
 app.get("/api/requisiciones/:id/excel", authMiddleware, async (req, res) => {
   try {
     const { id } = req.params;
@@ -1265,7 +1551,6 @@ app.get("/api/requisiciones/:id/excel", authMiddleware, async (req, res) => {
   }
 });
 
-// NUEVO: generar "Word" (HTML con content-type msword) para abrir en Word
 app.get("/api/requisiciones/:id/word", authMiddleware, async (req, res) => {
   try {
     const { id } = req.params;
@@ -1308,3 +1593,207 @@ app.get("/api/requisiciones/:id/word", authMiddleware, async (req, res) => {
     res.status(500).json({ error: "Error al generar Word" });
   }
 });
+
+// --- Nuevo endpoint: Devolver requisición para corrección ---
+app.post("/api/requisiciones/:id/devolver", authMiddleware, async (req, res) => {
+  const { id } = req.params;
+  const { motivo } = req.body || {}; // opcional: motivo de devolución
+
+  try {
+    // 1) Verificar existencia
+    const [rows] = await pool.query("SELECT id FROM requisiciones WHERE id = ?", [id]);
+    if (rows.length === 0) {
+      return res.status(404).json({ message: "Requisición no encontrada" });
+    }
+
+    // 2) Marcar la requisición como 'devuelta'
+    await pool.query("UPDATE requisiciones SET status = ? WHERE id = ?", ["devuelta", id]);
+
+    // 3) Resetear estado de productos: dejar sin aprobado (NULL) para permitir corrección
+    await pool.query(
+      `UPDATE requisicion_productos
+       SET aprobado = NULL
+       WHERE requisicion_id = ?`,
+      [id]
+    );
+
+    // 4) Resetear aprobaciones: poner todas en 'pendiente' y visible = FALSE
+    await pool.query(
+      `UPDATE requisicion_aprobaciones
+       SET estado = 'pendiente', visible = FALSE
+       WHERE requisicion_id = ?`,
+      [id]
+    );
+
+    // 5) Activar la primera aprobación (orden = 1) para que vuelva a empezar la cadena de aprobaciones
+    await pool.query(
+      `UPDATE requisicion_aprobaciones
+       SET visible = TRUE
+       WHERE requisicion_id = ? AND orden = 1`,
+      [id]
+    );
+
+    // 6) (Opcional) Registrar un log interno sobre la devolución (si existe tabla de logs)
+    // await pool.query(`INSERT INTO requisicion_logs (requisicion_id, tipo, mensaje, creado_por) VALUES (?, 'devolucion', ?, ?)`, [id, motivo || 'Devuelta por comprador', req.user.nombre]);
+
+    res.json({ message: "Requisición devuelta para corrección", requisicionId: Number(id) });
+  } catch (err) {
+    console.error("❌ Error al devolver la requisición:", err);
+    res.status(500).json({ message: "Error al devolver la requisición" });
+  }
+});
+
+// --- Nuevo endpoint: Aprobar totalmente una requisición (marcar como 'aprobada') ---
+app.post("/api/requisiciones/:id/aprobar-total", authMiddleware, async (req, res) => {
+  const { id } = req.params;
+  try {
+    // 1) Verificar existencia
+    const [rows] = await pool.query("SELECT id FROM requisiciones WHERE id = ?", [id]);
+    if (rows.length === 0) {
+      return res.status(404).json({ message: "Requisición no encontrada" });
+    }
+
+    // 2) Marcar todos los productos como 'aprobado' (asegura que estén aprobados)
+    await pool.query(
+      `UPDATE requisicion_productos
+       SET aprobado = 'aprobado'
+       WHERE requisicion_id = ?`,
+      [id]
+    );
+
+    // 3) Marcar todas las aprobaciones como 'aprobada' y ocultarlas (visible = FALSE)
+    await pool.query(
+      `UPDATE requisicion_aprobaciones
+       SET estado = 'aprobada', visible = FALSE
+       WHERE requisicion_id = ?`,
+      [id]
+    );
+
+    // 4) Marcar la requisición como 'aprobada'
+    await pool.query(
+      `UPDATE requisiciones
+       SET status = 'Totalmente Aprobada'
+       WHERE id = ?`,
+      [id]
+    );
+
+    // 5) (Opcional) Actualizar valor_total por si fuera necesario recalcular
+    const [sumRows] = await pool.query(
+      `SELECT SUM(COALESCE(valor_estimado,0) * COALESCE(cantidad,1)) AS total
+       FROM requisicion_productos
+       WHERE requisicion_id = ? AND aprobado = 'aprobado'`,
+      [id]
+    );
+    const nuevoTotal = sumRows[0]?.total ?? 0;
+    await pool.query(`UPDATE requisiciones SET valor_total = ? WHERE id = ?`, [nuevoTotal, id]);
+
+    res.json({ message: "Requisición marcada como aprobada (total)", requisicionId: Number(id) });
+  } catch (err) {
+    console.error("❌ Error al aprobar totalmente la requisición:", err);
+    res.status(500).json({ message: "Error al aprobar la requisición" });
+  }
+});
+
+// --- NUEVO: reemplazar productos de una requisición ---
+app.put("/api/requisiciones/:id/productos", authMiddleware, async (req, res) => {
+  try {
+    const { id } = req.params;
+    const { productos } = req.body;
+
+    // validar existencia
+    const [r] = await pool.query("SELECT id FROM requisiciones WHERE id = ?", [id]);
+    if (r.length === 0) return res.status(404).json({ message: "Requisición no encontrada" });
+
+    // eliminar productos previos
+    await pool.query("DELETE FROM requisicion_productos WHERE requisicion_id = ?", [id]);
+
+    if (Array.isArray(productos) && productos.length > 0) {
+      const values = productos.map((p) => [
+        id,
+        p.nombre || '',
+        p.cantidad ?? 1,
+        p.descripcion || '',
+        p.compraTecnologica ? 1 : 0,
+        p.ergonomico ? 1 : 0,
+        p.valorEstimado ?? 0,
+        p.centroCosto || '',
+        p.cuentaContable || '',
+        null, // aprobado (reset)
+      ]);
+
+      await pool.query(
+        `INSERT INTO requisicion_productos
+         (requisicion_id, nombre, cantidad, descripcion, compra_tecnologica, ergonomico, valor_estimado, centro_costo, cuenta_contable, aprobado)
+         VALUES ?`,
+        [values]
+      );
+    }
+
+    // recalcular valor_total
+    const [sumRows] = await pool.query(
+      `SELECT SUM(COALESCE(valor_estimado,0) * COALESCE(cantidad,1)) AS total
+       FROM requisicion_productos WHERE requisicion_id = ?`,
+      [id]
+    );
+    const nuevoTotal = sumRows[0]?.total ?? 0;
+    await pool.query("UPDATE requisiciones SET valor_total = ? WHERE id = ?", [nuevoTotal, id]);
+
+    res.json({ message: "Productos actualizados correctamente", nuevoTotal });
+  } catch (err) {
+    console.error("❌ Error al actualizar productos de requisición:", err);
+    res.status(500).json({ message: "Error al actualizar productos" });
+  }
+});
+
+async function getApprovalProgress(requisicionId) {
+  const [reqValRows] = await pool.query(
+    `SELECT valor_total FROM requisiciones WHERE id = ?`,
+    [requisicionId]
+  );
+  const valorRequisicion = Number(reqValRows[0]?.valor_total || 0);
+
+  const THRESHOLD = 10000000;
+
+  const requiredMinimum = valorRequisicion >= THRESHOLD ? 4 : 2;
+
+  const [countsRows] = await pool.query(
+    `
+    SELECT 
+      COUNT(*) AS total,
+      SUM(CASE WHEN estado = 'aprobada' THEN 1 ELSE 0 END) AS aprobadas,
+      SUM(CASE WHEN estado = 'pendiente' THEN 1 ELSE 0 END) AS pendientes,
+      MAX(CASE WHEN estado = 'aprobada' THEN orden ELSE NULL END) AS lastApprovedOrder
+    FROM requisicion_aprobaciones
+    WHERE requisicion_id = ?
+    `,
+    [requisicionId]
+  );
+
+  const totalApprovals = countsRows[0]?.total || 0;
+  const approvedCount = Number(countsRows[0]?.aprobadas || 0);
+  const pendientesCount = Number(countsRows[0]?.pendientes || 0);
+  const lastApprovedOrder = countsRows[0]?.lastApprovedOrder ?? null;
+
+  const nextOrder = pendientesCount > 0
+    ? (lastApprovedOrder === null ? 1 : lastApprovedOrder + 1)
+    : null;
+
+  const [approvers] = await pool.query(
+    `SELECT id, rol_aprobador, nombre_aprobador, area, estado, orden, visible 
+     FROM requisicion_aprobaciones 
+     WHERE requisicion_id = ? 
+     ORDER BY orden ASC`,
+    [requisicionId]
+  );
+
+  return {
+    valorRequisicion,
+    requiredMinimum,
+    totalApprovals,
+    approvedCount,
+    pendientesCount,
+    lastApprovedOrder,
+    nextOrder,
+    approvers
+  };
+}
