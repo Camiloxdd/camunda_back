@@ -46,6 +46,17 @@ const pool = mysql.createPool({
   port: 3306
 });
 
+// --- nuevo helper: consulta segura por varios cargos ---
+async function fetchUsersByRoles(roles = []) {
+  if (!Array.isArray(roles) || roles.length === 0) return [];
+  console.log("fetchUsersByRoles -> solicitando roles:", roles);
+  const placeholders = roles.map(() => '?').join(', ');
+  const sql = `SELECT nombre, cargo FROM user WHERE cargo IN (${placeholders})`;
+  const [rows] = await pool.query(sql, roles);
+  console.log("fetchUsersByRoles -> resultados devueltos:", rows?.length ?? 0, rows);
+  return rows || [];
+}
+
 (async () => {
   try {
     // Intentamos agregar la columna
@@ -319,7 +330,7 @@ app.post("/api/requisicion/create", async (req, res) => {
 
     if (tieneTecnologico) rolesNecesarios.push("dicTYP", "gerTyC");
     if (tieneErgonomico) rolesNecesarios.push("dicSST", "gerSST");
-    if (requiereAltas) rolesNecesarios.push("gerAdmin", "gerGeneral");
+    if (requiereAltas && !presupuestada) rolesNecesarios.push("gerAdmin", "gerGeneral");
 
     // 5️⃣ Buscar aprobadores reales desde la tabla users
     let aprobadores = [];
@@ -626,11 +637,11 @@ app.put("/api/requisiciones/:id/aprobar-items", authMiddleware, async (req, res)
       [nuevoTotal, id]
     );
 
-    // 4️⃣ Marcar la aprobación del usuario actual como completada
+    // 4️⃣ Marcar la aprobación del usuario actual como completada y guardar fecha de aprobación
     const [result] = await pool.query(
       `
       UPDATE requisicion_aprobaciones
-      SET estado = 'aprobada', visible = FALSE
+      SET estado = 'aprobada', visible = FALSE, fecha_aprobacion = NOW()
       WHERE requisicion_id = ? AND nombre_aprobador = ? AND area = ?
       `,
       [id, nombre, area]
@@ -884,196 +895,6 @@ app.delete("/formularios/:id", async (req, res) => {
   }
 });
 
-app.get("/requisiciones/:id/excel", async (req, res) => {
-  try {
-    const tempDir = path.join(__dirname, "temp");
-
-    if (!fs.existsSync(tempDir)) {
-      fs.mkdirSync(tempDir);
-    }
-
-    const { id } = req.params;
-    const plantillaPath = path.join(__dirname, "templates", "plantilla.xlsx");
-    console.log("Intentando leer plantilla en:", plantillaPath);
-
-    if (!fs.existsSync(plantillaPath)) {
-      console.error("❌ Plantilla no encontrada:", plantillaPath);
-      return res.status(500).json({ error: "Plantilla no encontrada" });
-    }
-
-    console.log("📥 ID recibido:", id);
-    console.log("📂 Plantilla existe:", fs.existsSync(plantillaPath));
-
-    // 🧩 Cambiamos tabla: requisiciones.requisiciones
-    const [reqRows] = await pool.query(
-      "SELECT * FROM requisiciones.requisiciones WHERE id = ?",
-      [id]
-    );
-    console.log("📦 Requisiciones encontradas:", reqRows.length);
-
-    if (reqRows.length === 0)
-      return res.status(404).json({ error: "Requisición no encontrada" });
-
-    const requisicion = reqRows[0];
-
-    // 🧩 Cambiamos tabla: requisiciones.requisicion_productos
-    const [productosRows] = await pool.query(
-      "SELECT * FROM requisiciones.requisicion_productos WHERE requisicion_id = ?",
-      [id]
-    );
-
-    const workbook = new ExcelJS.Workbook();
-    await workbook.xlsx.readFile(plantillaPath);
-    const worksheet = workbook.getWorksheet("F-SGA-SG-19");
-
-    // 🔹 Cabecera general (usar "N/A" si falta)
-    worksheet.getCell("E7").value = requisicion.nombre_solicitante || "N/A";
-    worksheet.getCell("E8").value = requisicion.fecha || "N/A";
-    worksheet.getCell("E9").value = requisicion.fecha_requerido_entrega || "N/A";
-    worksheet.getCell("E10").value = requisicion.justificacion || "N/A";
-    worksheet.getCell("O7").value = requisicion.area || "N/A";
-    worksheet.getCell("O8").value = requisicion.sede || "N/A";
-    worksheet.getCell("K9").value = requisicion.urgencia || "N/A";
-    worksheet.getCell("T10").value = (typeof requisicion.presupuestada !== "undefined") ? (requisicion.presupuestada ? "Sí" : "No") : "N/A";
-    worksheet.getCell("T9").value = requisicion.tiempoAproximadoGestion || "N/A";
-
-    worksheet.getCell("T9").value = requisicion.nombre_solicitante || "N/A";
-
-    // REMOVIDO: ya no rellenamos D28/D29/D34/D35 con el solicitante directamente
-    // ...existing code...
-
-    // 🔹 Formato numérico
-    const parseCurrencyToNumber = (value) => {
-      if (value == null) return NaN;
-      const str = String(value).trim();
-      if (str === "") return NaN;
-      return Number(str.replace(/[^\d.-]/g, ""));
-    };
-
-    // 🔹 Productos (igual que antes)
-    const startRow = 14;
-    productosRows.forEach((item, idx) => {
-      const row = worksheet.getRow(startRow + idx);
-      row.getCell(2).value = idx + 1;
-      row.getCell(3).value = item.nombre || "N/A";
-      row.getCell(6).value =
-        item.cantidad !== undefined && item.cantidad !== null
-          ? Number(item.cantidad)
-          : "";
-      row.getCell(7).value = item.centro_costo || "N/A";
-      row.getCell(8).value = item.cuenta_contable || "N/A";
-      row.getCell(12).value = parseCurrencyToNumber(item.valor_estimado) || 0;
-      row.getCell(10).value = requisicion.presupuestada ? "Sí" : "No";
-      row.getCell(13).value = item.descripcion || "N/A";
-      row.getCell(14).value = item.compra_tecnologica ? "Sí Aplica" : "No Aplica";
-      row.getCell(17).value = item.ergonomico ? "Sí Aplica" : "No Aplica";
-      row.commit();
-    });
-
-    // --- NUEVA LÓGICA DE APROBACIONES (UNA SOLA FILA: 28 nombres / 29 firmas) ---
-    try {
-      // 1) Obtener área real del solicitante (buscar user por nombre)
-      const [userRows] = await pool.query(
-        "SELECT area FROM user WHERE nombre = ? LIMIT 1",
-        [requisicion.nombre_solicitante]
-      );
-      const solicitanteArea = (userRows[0]?.area || requisicion.area || "").toString().toUpperCase();
-
-      // 2) Detectar flags en productos
-      const hasTecnologico = productosRows.some(p => !!(p.compra_tecnologica || p.compraTecnologica));
-      const hasErgonomico = productosRows.some(p => !!(p.ergonomico));
-
-      // 3) Calcular roles necesarios (director / gerente) según reglas
-      // director = dicSST o dicTYP (según solicitante)
-      // gerente   = gerSST o gerTyC (según flags)
-      const rolesNeeded = new Set();
-
-      if (solicitanteArea.includes("SST")) {
-        rolesNeeded.add("dicSST");
-      } else if (solicitanteArea.includes("TYP")) {
-        rolesNeeded.add("dicTYP");
-      }
-
-      if (hasTecnologico) rolesNeeded.add("gerTyC");
-      // ergonomía: si solicitante TYP -> gerTyC + dicSST + dicTYP (según regla solicitada)
-      if (hasErgonomico) {
-        if (solicitanteArea.includes("TYP")) {
-          rolesNeeded.add("gerTyC");
-          rolesNeeded.add("dicSST");
-          rolesNeeded.add("dicTYP"); // asegurar director TYP presente
-        } else {
-          rolesNeeded.add("gerSST");
-        }
-      }
-
-      // 4) Leer nombres reales de la tabla user para esos cargos
-      const rolesArray = Array.from(rolesNeeded);
-      const usuariosPorCargo = {};
-      if (rolesArray.length > 0) {
-        const [usuarios] = await pool.query(
-          `SELECT nombre, cargo FROM user WHERE cargo IN (?)`,
-          [rolesArray]
-        );
-        usuarios.forEach(u => { usuariosPorCargo[u.cargo] = u.nombre; });
-      }
-
-      // 5) Limpiar las celdas de la única tabla (fila 28 nombres, fila 29 firmas)
-      const nameCells = ['D28', 'K28', 'R28']; // solicitante, director, gerente
-      const sigCells = ['D29', 'K29', 'R29'];
-      [...nameCells, ...sigCells].forEach(c => worksheet.getCell(c).value = "");
-
-      // 6) Escribir solicitante en D28 (siempre)
-      worksheet.getCell('D28').value = requisicion.nombre_solicitante || "N/A";
-      worksheet.getCell('D29').value = ""; // firma solicitante (vacía)
-
-      // 7) Escribir director en K28 (prefiere dicSST si ambos existen por regla; si no, dicTYP)
-      // Si existen ambos directores (dicTYP y dicSST) mostrarlos en la misma celda separados por " / "
-      const directorParts = [];
-      if (usuariosPorCargo['dicTYP']) directorParts.push(usuariosPorCargo['dicTYP']);
-      if (usuariosPorCargo['dicSST']) directorParts.push(usuariosPorCargo['dicSST']);
-      worksheet.getCell('K28').value = directorParts.length > 0 ? directorParts.join(' / ') : "N/A";
-      worksheet.getCell('K29').value = ""; // firma director
-
-      // 8) Escribir gerente en R28 (preferir gerSST si ergonomico; gerTyC si tecnologico or role present)
-      // lógica simple: si gerSST existe y se pidió, usarlo; else gerTyC
-      const gerenteName =
-        usuariosPorCargo['gerSST'] ||
-        usuariosPorCargo['gerTyC'] ||
-        null;
-      worksheet.getCell('R28').value = gerenteName || "N/A";
-      worksheet.getCell('R29').value = ""; // firma gerente
-
-      // nota: si algún rol no fue encontrado en la BD se deja "N/A"
-    } catch (err) {
-      console.warn("⚠️ Error calculando/aplicando aprobaciones en Excel (tabla única):", err);
-    }
-
-    // 🔹 Guardar el Excel (igual que antes)
-    // 📁 Ruta del archivo temporal
-    const excelPath = path.join(tempDir, `requisicion_${id}.xlsx`);
-
-    // 💾 Guardar el archivo Excel
-    await workbook.xlsx.writeFile(excelPath);
-
-    // 📤 Enviar el archivo al cliente
-    res.download(excelPath, `requisicion_${id}.xlsx`, (err) => {
-      if (err) {
-        console.error("❌ Error al enviar el archivo:", err);
-        res.status(500).json({ error: "Error al enviar el archivo" });
-      } else {
-        console.log("✅ Archivo enviado correctamente");
-        // 🧹 (Opcional) eliminar el archivo después de enviarlo
-        fs.unlink(excelPath, (unlinkErr) => {
-          if (unlinkErr) console.warn("⚠️ No se pudo borrar el archivo temporal:", unlinkErr);
-        });
-      }
-    });
-  } catch (err) {
-    console.error("❌ Error al generar Excel:", err);
-    res.status(500).json({ error: "Error al generar Excel" });
-  }
-});
-
 app.get("/requisiciones/:id/pdf", async (req, res) => {
   try {
     const { id } = req.params;
@@ -1116,8 +937,6 @@ app.get("/requisiciones/:id/pdf", async (req, res) => {
     worksheet.getCell("T10").value = (typeof requisicion.presupuestada !== "undefined") ? (requisicion.presupuestada ? "Sí" : "No") : "N/A";
     worksheet.getCell("T9").value = requisicion.tiempoAproximadoGestion || "N/A";
 
-    worksheet.getCell("T9").value = requisicion.nombre_solicitante || "N/A";
-
     // REMOVIDO: ya no rellenamos D28/D29/D34/D35 con el solicitante directamente
     // ...existing code...
 
@@ -1189,11 +1008,50 @@ app.get("/requisiciones/:id/pdf", async (req, res) => {
       const rolesArray = Array.from(rolesNeeded);
       const usuariosPorCargo = {};
       if (rolesArray.length > 0) {
-        const [usuarios] = await pool.query(
-          `SELECT nombre, cargo FROM user WHERE cargo IN (?)`,
-          [rolesArray]
-        );
+        const usuarios = await fetchUsersByRoles(rolesArray);
         usuarios.forEach(u => { usuariosPorCargo[u.cargo] = u.nombre; });
+      }
+      console.log("usuariosPorCargo (pdf):", usuariosPorCargo, "rolesArray:", rolesArray);
+
+      // --- AÑADIDO: validar y completar gerAdmin / gerGeneral en B39 / L39
+      // No sobreescribir otras aprobaciones: sólo escribir si la celda está vacía o "N/A".
+      try {
+        const SMLV_local = 1300000;
+        const limite_local = SMLV_local * 10;
+        const valorTotalNum = Number(requisicion.valor_total || 0);
+
+        const currentB39 = (worksheet.getCell('B39').value || "").toString().trim();
+        const currentL39 = (worksheet.getCell('L39').value || "").toString().trim();
+
+        if (!requisicion.presupuestada && valorTotalNum >= limite_local) {
+          // intentar obtener nombres de gerAdmin / gerGeneral (si no están en usuariosPorCargo)
+          const missing = [];
+          if (!usuariosPorCargo['gerAdmin']) missing.push('gerAdmin');
+          if (!usuariosPorCargo['gerGeneral']) missing.push('gerGeneral');
+          console.log("Necesario completar B39/L39 (pdf) -> missing roles:", missing);
+          if (missing.length > 0) {
+            const admins = await fetchUsersByRoles(missing);
+            console.log("Admins recuperados (pdf):", admins);
+            admins.forEach(u => { usuariosPorCargo[u.cargo] = u.nombre; });
+          }
+          console.log("usuariosPorCargo tras completar (pdf):", usuariosPorCargo);
+          // escribir sólo si la celda está vacía o contiene "N/A"
+          if (!currentB39 || currentB39 === "N/A") {
+            worksheet.getCell('B39').value = usuariosPorCargo['gerAdmin'] || "N/A";
+          }
+          if (!currentL39 || currentL39 === "N/A") {
+            worksheet.getCell('L39').value = usuariosPorCargo['gerGeneral'] || "N/A";
+          }
+        } else {
+          // No corresponde: si las celdas están vacías, dejar "N/A"; si ya tenían valor, respetarlo.
+          if (!currentB39) worksheet.getCell('B39').value = "";
+          if (!currentL39) worksheet.getCell('L39').value = "";
+        }
+      } catch (e) {
+        console.warn("⚠️ No fue posible obtener gerencias administrativas para B39/L39:", e);
+        // sólo poner N/A si la celda estaba vacía
+        if (!(worksheet.getCell('B39').value || "").toString().trim()) worksheet.getCell('B39').value = "N/A";
+        if (!(worksheet.getCell('L39').value || "").toString().trim()) worksheet.getCell('L39').value = "N/A";
       }
 
       // 5) Limpiar las celdas de la única tabla (fila 28 nombres, fila 29 firmas)
@@ -1779,7 +1637,7 @@ async function getApprovalProgress(requisicionId) {
     : null;
 
   const [approvers] = await pool.query(
-    `SELECT id, rol_aprobador, nombre_aprobador, area, estado, orden, visible 
+    `SELECT id, rol_aprobador, nombre_aprobador, area, estado, orden, visible, fecha_aprobacion
      FROM requisicion_aprobaciones 
      WHERE requisicion_id = ? 
      ORDER BY orden ASC`,
