@@ -23,13 +23,13 @@ app.use(bodyParser.json());
 app.use(cookieParser());
 
 const ZEEBE_AUTHORIZATION_SERVER_URL = 'https://login.cloud.camunda.io/oauth/token';
-const ZEEBE_CLIENT_ID = 'nvbxHeJMHshyETuNQ7napSEjO1ZVp0Mh';
-const ZEEBE_CLIENT_SECRET = '25rj2O8VEIiVH6MlQcbkn2RJr22tbUGeUzYpbX1tTSLmYUw-xXa-g3cSTfqLabPm';
-const CAMUNDA_TASKLIST_BASE_URL = 'https://jfk-1.tasklist.camunda.io/9678cfa5-01e6-43a6-9d0d-b418d1a331b7';
+const ZEEBE_CLIENT_ID = '6JsY0YYR8p.Kt1kwv9lEtG8BoeuIy5z3';
+const ZEEBE_CLIENT_SECRET = '-pkI7o4oOCI_ROTsmJMcfn50mU67~tlRwxkqaf7WJ9U2yp9N0lzYsmD.aIclhtGX';
+const CAMUNDA_TASKLIST_BASE_URL = 'https://jfk-1.tasklist.camunda.io/4401ad3b-0902-4386-b516-001657344b9b';
 const AUDIENCE = 'tasklist.camunda.io';
-const CAMUNDA_ZEEBE_URL = 'https://jfk-1.zeebe.camunda.io/9678cfa5-01e6-43a6-9d0d-b418d1a331b7'
+const CAMUNDA_ZEEBE_URL = 'https://jfk-1.zeebe.camunda.io/4401ad3b-0902-4386-b516-001657344b9b';
 
-const FRONTEND_URL = 'http://localhost:3000'
+const FRONTEND_URL = 'http://localhost:3000';
 
 app.use(cors({
   origin: FRONTEND_URL,
@@ -1184,8 +1184,7 @@ app.post("/api/process/start", async (req, res) => {
     const response = await axios.post(
       `${CAMUNDA_ZEEBE_URL}/v2/process-instances`,
       {
-        processDefinitionId: "Process_1bayiac",
-        version: -1,
+        processDefinitionId: "Process_16fnxs5",
         variables: variables || {},
       },
       {
