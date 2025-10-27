@@ -23,11 +23,11 @@ app.use(bodyParser.json());
 app.use(cookieParser());
 
 const ZEEBE_AUTHORIZATION_SERVER_URL = 'https://login.cloud.camunda.io/oauth/token';
-const ZEEBE_CLIENT_ID = '6JsY0YYR8p.Kt1kwv9lEtG8BoeuIy5z3';
-const ZEEBE_CLIENT_SECRET = '-pkI7o4oOCI_ROTsmJMcfn50mU67~tlRwxkqaf7WJ9U2yp9N0lzYsmD.aIclhtGX';
-const CAMUNDA_TASKLIST_BASE_URL = 'https://jfk-1.tasklist.camunda.io/4401ad3b-0902-4386-b516-001657344b9b';
+const ZEEBE_CLIENT_ID = 'iuHIUl.XIvqtiWIOiQNhgImbWMFqjSmh';
+const ZEEBE_CLIENT_SECRET = 'zay9zGaZqR.6QC5cVbZA0Fgaq36y~oBaIvvn1nSBj7vwm0D0hYMG~DxF77fCED77';
+const CAMUNDA_TASKLIST_BASE_URL = 'https://jfk-1.tasklist.camunda.io/9524da24-bd52-4c7e-8cac-a02f2b7dda9f';
 const AUDIENCE = 'tasklist.camunda.io';
-const CAMUNDA_ZEEBE_URL = 'https://jfk-1.zeebe.camunda.io/4401ad3b-0902-4386-b516-001657344b9b';
+const CAMUNDA_ZEEBE_URL = 'https://jfk-1.zeebe.camunda.io/9524da24-bd52-4c7e-8cac-a02f2b7dda9f';
 
 const FRONTEND_URL = 'http://localhost:3000';
 
@@ -556,9 +556,9 @@ app.get("/api/requisiciones/:id", authMiddleware, async (req, res) => {
     // devolver solo items que NO fueron rechazados (rechazados deben desaparecer en siguientes aprobaciones)
     const [productos] = await pool.query(
       `
-      SELECT id, nombre, descripcion, cantidad, valor_estimado, compra_tecnologica, ergonomico, aprobado
+      SELECT id, nombre, descripcion, cantidad, valor_estimado, compra_tecnologica, ergonomico, aprobado, centro_costo, cuenta_contable
       FROM requisicion_productos
-      WHERE requisicion_id = ? AND (aprobado IS NULL OR aprobado != 'rechazado')
+      WHERE requisicion_id = ?
       `,
       [id]
     );
@@ -596,48 +596,71 @@ app.get("/api/requisiciones/:id/aprobacion", authMiddleware, async (req, res) =>
 app.put("/api/requisiciones/:id/aprobar-items", authMiddleware, async (req, res) => {
   try {
     const { id } = req.params; // ID de la requisición
-    const { decisiones } = req.body;
+    const { decisiones, action } = req.body; // action puede ser 'approve' | 'reject' (opcional)
     const { nombre, area } = req.user;
 
     if (!Array.isArray(decisiones)) {
-      return res.status(400).json({ message: "Formato inválido" });
+      return res.status(400).json({ message: "Formato inválido: decisiones debe ser un array" });
     }
 
     // 1️⃣ Actualizar estado de cada producto (aprobado/rechazado)
-    for (const { id: productoId, aprobado } of decisiones) {
+    for (const { id: productoId, aprobado, fecha_aprobado } of decisiones) {
       await pool.query(
         `
         UPDATE requisicion_productos
-        SET aprobado = ?
+        SET aprobado = ?, fecha_aprobado = ?
         WHERE id = ? AND requisicion_id = ?
         `,
-        [aprobado ? "aprobado" : "rechazado", productoId, id]
+        [aprobado ? "aprobado" : "rechazado", aprobado ? fecha_aprobado || new Date() : null, productoId, id]
       );
     }
 
     // 2️⃣ Calcular nuevo valor total SOLO con productos aprobados
+    // considerar aprobados que estén guardados como 'aprobado' O como 1 (legacy / boolean)
     const [rows] = await pool.query(
       `
-      SELECT SUM(valor_estimado * cantidad) AS nuevo_total
+      SELECT SUM(COALESCE(valor_estimado,0) * COALESCE(cantidad,1)) AS nuevo_total
       FROM requisicion_productos
-      WHERE requisicion_id = ? AND aprobado = 'aprobado'
+      WHERE requisicion_id = ? AND (aprobado = 'aprobado' OR aprobado = 1)
       `,
       [id]
     );
 
     const nuevoTotal = rows[0]?.nuevo_total || 0;
 
-    // 3️⃣ Actualizar el valor total de la requisición
+    // 3️⃣ ACTUALIZAR SOLO valor_total por ahora (no cambiar status todavía)
     await pool.query(
-      `
-      UPDATE requisiciones
-      SET valor_total = ?
-      WHERE id = ?
-      `,
+      `UPDATE requisiciones SET valor_total = ? WHERE id = ?`,
       [nuevoTotal, id]
     );
 
-    // 4️⃣ Marcar la aprobación del usuario actual como completada y guardar fecha de aprobación
+    // 4️⃣ Verificar si quedan productos aprobados
+    const [countRows] = await pool.query(
+      `SELECT COUNT(*) AS cnt FROM requisicion_productos WHERE requisicion_id = ? AND (aprobado = 'aprobado' OR aprobado = 1)`,
+      [id]
+    );
+    const approvedCount = Number(countRows[0]?.cnt || 0);
+
+    // 5️⃣ Si NO queda ningún producto aprobado -> marcar requisición como rechazada total, finalizar aprobaciones
+    if (approvedCount === 0) {
+      await pool.query(
+        `UPDATE requisicion_aprobaciones SET estado = 'rechazada', visible = FALSE WHERE requisicion_id = ?`,
+        [id]
+      );
+      await pool.query(
+        `UPDATE requisiones SET status = 'rechazada', valor_total = 0 WHERE id = ?`,
+        [id]
+      );
+
+      console.log("Requisición marcada como RECHAZADA totalmente:", id);
+      return res.json({
+        message: "Requisición rechazada completamente. No quedan ítems aprobados.",
+        nuevo_total: 0,
+        pendientes: 0
+      });
+    }
+
+    // 6️⃣ Si hay al menos un producto aprobado -> continuar flujo normal: marcar la aprobación del usuario actual y activar siguiente aprobador
     const [result] = await pool.query(
       `
       UPDATE requisicion_aprobaciones
@@ -651,7 +674,7 @@ app.put("/api/requisiciones/:id/aprobar-items", authMiddleware, async (req, res)
       return res.status(404).json({ message: "No se encontró aprobación correspondiente al usuario actual." });
     }
 
-    // 5️⃣ Obtener el orden del aprobador actual
+    // 7️⃣ Obtener el orden del aprobador actual
     const [actual] = await pool.query(
       `
       SELECT orden
@@ -663,8 +686,8 @@ app.put("/api/requisiciones/:id/aprobar-items", authMiddleware, async (req, res)
 
     const ordenActual = actual[0]?.orden;
 
+    // 8️⃣ Activar al siguiente aprobador (si existe)
     if (ordenActual) {
-      // 6️⃣ Activar (hacer visible) al siguiente aprobador
       await pool.query(
         `
         UPDATE requisicion_aprobaciones
@@ -675,31 +698,70 @@ app.put("/api/requisiciones/:id/aprobar-items", authMiddleware, async (req, res)
       );
     }
 
-    // 7️⃣ Verificar si quedan aprobaciones pendientes; si no quedan, marcar la requisición como 'aprobada'
+    // 9️⃣ Verificar si quedan aprobaciones pendientes
     const [pendientesRows] = await pool.query(
       `SELECT COUNT(*) AS cnt FROM requisicion_aprobaciones WHERE requisicion_id = ? AND estado = 'pendiente'`,
       [id]
     );
+
     const pendientesCount = pendientesRows[0]?.cnt || 0;
-    if (pendientesCount === 0) {
+
+    // 10️⃣ Decidir estado final de la requisición:
+    // - si no quedan aprobaciones pendientes y hay items aprobados => 'aprobada'
+    // - en cualquier otro caso dejar 'pendiente' (o el flujo ya activado)
+    if (pendientesCount === 0 && approvedCount > 0) {
       await pool.query(
         `UPDATE requisiciones SET status = 'aprobada' WHERE id = ?`,
         [id]
       );
     }
 
-    console.log("ID a aprobar:", id);
+    console.log("✅ Requisición procesada correctamente:", id);
 
     res.json({
-      message: `Aprobación registrada. Se activó el siguiente aprobador.`,
+      message: "Operación registrada correctamente.",
       nuevo_total: nuevoTotal,
       pendientes: pendientesCount
     });
   } catch (error) {
-    console.error("❌ Error al aprobar ítems:", error);
-    res.status(500).json({ message: "Error al aprobar ítems" });
+    console.error("❌ Error al aprobar/rechazar ítems:", error);
+    res.status(500).json({ message: "Error al procesar ítems" });
   }
 });
+
+
+app.get("/api/requisiciones/aprobador/:nombre", async (req, res) => {
+  try {
+    const { nombre } = req.params;
+
+    const [rows] = await pool.query(
+      `
+      SELECT 
+        r.id AS requisicion_id,
+        r.valor_total,
+        r.status,
+        r.nombre_solicitante,
+        r.fecha,
+        r.area,
+        r.sede,
+        r.urgencia,
+        r.justificacion,
+        a.estado AS estado_aprobacion
+      FROM requisiciones r
+      INNER JOIN requisicion_aprobaciones a ON r.id = a.requisicion_id
+      WHERE a.nombre_aprobador = ?
+      ORDER BY r.fecha DESC
+      `,
+      [nombre]
+    );
+
+    res.json(rows);
+  } catch (error) {
+    console.error("❌ Error obteniendo requisiciones por aprobador:", error);
+    res.status(500).json({ error: "Error al obtener requisiciones" });
+  }
+});
+
 
 //FORMULARIOS
 app.put("/formularios/:id", async (req, res) => {
@@ -922,6 +984,8 @@ app.get("/requisiciones/:id/pdf", async (req, res) => {
       [id]
     );
 
+    console.log("📦 Productos encontrados:", productosRows.length);
+
     const workbook = new ExcelJS.Workbook();
     await workbook.xlsx.readFile(plantillaPath);
     const worksheet = workbook.getWorksheet("F-SGA-SG-19");
@@ -964,125 +1028,127 @@ app.get("/requisiciones/:id/pdf", async (req, res) => {
       row.getCell(10).value = requisicion.presupuestada ? "Sí" : "No";
       row.getCell(13).value = item.descripcion || "N/A";
       row.getCell(14).value = item.compra_tecnologica ? "Sí Aplica" : "No Aplica";
-      row.getCell(17).value = item.ergonomico ? "Sí Aplica" : "No Aplica";
+      row.getCell(18).value =
+        item.ergonomico === 1 || item.ergonomico === true
+          ? "Sí Aplica"
+          : "No Aplica";
+
       row.commit();
     });
 
-    // --- NUEVA LÓGICA DE APROBACIONES (UNA SOLA FILA: 28 nombres / 29 firmas) ---
+    // --- NUEVA LÓGICA DE APROBACIONES (con 4 columnas de aprobadores) ---
     try {
-      // 1) Obtener área real del solicitante (buscar user por nombre)
+      // 1️⃣ Obtener área del solicitante
       const [userRows] = await pool.query(
         "SELECT area FROM user WHERE nombre = ? LIMIT 1",
         [requisicion.nombre_solicitante]
       );
-      const solicitanteArea = (userRows[0]?.area || requisicion.area || "").toString().toUpperCase();
+      let solicitanteArea = (userRows[0]?.area || requisicion.area || "").toString().trim().toUpperCase();
 
-      // 2) Detectar flags en productos
+      console.log("📌 Área solicitante:", solicitanteArea);
+
+      // 2️⃣ Detectar flags
       const hasTecnologico = productosRows.some(p => !!(p.compra_tecnologica || p.compraTecnologica));
       const hasErgonomico = productosRows.some(p => !!(p.ergonomico));
 
-      // 3) Calcular roles necesarios (director / gerente) según reglas
-      // director = dicSST o dicTYP (según solicitante)
-      // gerente   = gerSST o gerTyC (según flags)
+      console.log("⚙️ Productos -> Tecnológico:", hasTecnologico, "| Ergonómico:", hasErgonomico);
+
+      // 3️⃣ Determinar roles requeridos
       const rolesNeeded = new Set();
 
+      // Si pertenece a SST
       if (solicitanteArea.includes("SST")) {
-        rolesNeeded.add("dicSST");
-      } else if (solicitanteArea.includes("TYP")) {
-        rolesNeeded.add("dicTYP");
-      }
-
-      if (hasTecnologico) rolesNeeded.add("gerTyC");
-      // ergonomía: si solicitante TYP -> gerTyC + dicSST + dicTYP (según regla solicitada)
-      if (hasErgonomico) {
-        if (solicitanteArea.includes("TYP")) {
+        rolesNeeded.add("dicSST"); // siempre su director
+        if (hasTecnologico && hasErgonomico) {
+          rolesNeeded.add("dicTYP");
+          rolesNeeded.add("gerSST");
           rolesNeeded.add("gerTyC");
-          rolesNeeded.add("dicSST");
-          rolesNeeded.add("dicTYP"); // asegurar director TYP presente
-        } else {
+        } else if (hasTecnologico) {
+          rolesNeeded.add("gerTyC");
+        } else if (hasErgonomico) {
           rolesNeeded.add("gerSST");
         }
       }
 
-      // 4) Leer nombres reales de la tabla user para esos cargos
+      // Si pertenece a TYP
+      else if (solicitanteArea.includes("TYP")) {
+        rolesNeeded.add("dicTYP");
+        if (hasTecnologico && hasErgonomico) {
+          rolesNeeded.add("dicSST");
+          rolesNeeded.add("gerTyC");
+        } else if (hasTecnologico) {
+          rolesNeeded.add("gerTyC");
+        } else if (hasErgonomico) {
+          rolesNeeded.add("gerSST");
+        }
+      }
+
+      console.log("✅ Roles requeridos:", Array.from(rolesNeeded));
+
+      // 4️⃣ Buscar nombres
       const rolesArray = Array.from(rolesNeeded);
       const usuariosPorCargo = {};
       if (rolesArray.length > 0) {
         const usuarios = await fetchUsersByRoles(rolesArray);
         usuarios.forEach(u => { usuariosPorCargo[u.cargo] = u.nombre; });
       }
-      console.log("usuariosPorCargo (pdf):", usuariosPorCargo, "rolesArray:", rolesArray);
 
-      // --- AÑADIDO: validar y completar gerAdmin / gerGeneral en B39 / L39
-      // No sobreescribir otras aprobaciones: sólo escribir si la celda está vacía o "N/A".
+      console.log("👤 Usuarios encontrados:", usuariosPorCargo);
+
+      // 5️⃣ Limpiar celdas
+      const nameCells = ["D28", "I28", "M28", "O28", "S28"];
+      const sigCells = ["D29", "I29", "M29", "O29", "S29"];
+      [...nameCells, ...sigCells].forEach(c => worksheet.getCell(c).value = "");
+
+      // 6️⃣ Escribir solicitante
+      worksheet.getCell("D28").value = requisicion.nombre_solicitante || "N/A";
+
+      // 7️⃣ Escribir directores
+      worksheet.getCell("I28").value = usuariosPorCargo["dicTYP"] || "N/A";
+      worksheet.getCell("M28").value = usuariosPorCargo["dicSST"] || "N/A";
+
+      // 8️⃣ Escribir gerentes
+      worksheet.getCell("O28").value = usuariosPorCargo["gerTyC"] || "N/A";
+      worksheet.getCell("S28").value = usuariosPorCargo["gerSST"] || "N/A";
+
+      // Firmas vacías
+      ["I29", "M29", "O29", "S29"].forEach(c => worksheet.getCell(c).value = "");
+
+      // 9️⃣ Validar Gerencia Administrativa y General según monto
       try {
         const SMLV_local = 1300000;
         const limite_local = SMLV_local * 10;
         const valorTotalNum = Number(requisicion.valor_total || 0);
 
-        const currentB39 = (worksheet.getCell('B39').value || "").toString().trim();
-        const currentL39 = (worksheet.getCell('L39').value || "").toString().trim();
+        const currentD39 = (worksheet.getCell('D39').value || "").toString().trim();
+        const currentM39 = (worksheet.getCell('M39').value || "").toString().trim();
 
         if (!requisicion.presupuestada && valorTotalNum >= limite_local) {
-          // intentar obtener nombres de gerAdmin / gerGeneral (si no están en usuariosPorCargo)
           const missing = [];
           if (!usuariosPorCargo['gerAdmin']) missing.push('gerAdmin');
           if (!usuariosPorCargo['gerGeneral']) missing.push('gerGeneral');
-          console.log("Necesario completar B39/L39 (pdf) -> missing roles:", missing);
           if (missing.length > 0) {
             const admins = await fetchUsersByRoles(missing);
-            console.log("Admins recuperados (pdf):", admins);
             admins.forEach(u => { usuariosPorCargo[u.cargo] = u.nombre; });
           }
-          console.log("usuariosPorCargo tras completar (pdf):", usuariosPorCargo);
-          // escribir sólo si la celda está vacía o contiene "N/A"
-          if (!currentB39 || currentB39 === "N/A") {
-            worksheet.getCell('B39').value = usuariosPorCargo['gerAdmin'] || "N/A";
-          }
-          if (!currentL39 || currentL39 === "N/A") {
-            worksheet.getCell('L39').value = usuariosPorCargo['gerGeneral'] || "N/A";
-          }
+          if (!currentD39 || currentD39 === "N/A")
+            worksheet.getCell('D39').value = usuariosPorCargo['gerAdmin'] || "N/A";
+          if (!currentM39 || currentM39 === "N/A")
+            worksheet.getCell('M39').value = usuariosPorCargo['gerGeneral'] || "N/A";
         } else {
-          // No corresponde: si las celdas están vacías, dejar "N/A"; si ya tenían valor, respetarlo.
-          if (!currentB39) worksheet.getCell('B39').value = "";
-          if (!currentL39) worksheet.getCell('L39').value = "";
+          if (!currentD39) worksheet.getCell('D39').value = "";
+          if (!currentM39) worksheet.getCell('M39').value = "";
         }
       } catch (e) {
-        console.warn("⚠️ No fue posible obtener gerencias administrativas para B39/L39:", e);
-        // sólo poner N/A si la celda estaba vacía
-        if (!(worksheet.getCell('B39').value || "").toString().trim()) worksheet.getCell('B39').value = "N/A";
-        if (!(worksheet.getCell('L39').value || "").toString().trim()) worksheet.getCell('L39').value = "N/A";
+        console.warn("⚠️ Error al obtener gerencias:", e);
+        if (!(worksheet.getCell('D39').value || "").toString().trim())
+          worksheet.getCell('D39').value = "N/A";
+        if (!(worksheet.getCell('M39').value || "").toString().trim())
+          worksheet.getCell('M39').value = "N/A";
       }
 
-      // 5) Limpiar las celdas de la única tabla (fila 28 nombres, fila 29 firmas)
-      const nameCells = ['D28', 'K28', 'R28']; // solicitante, director, gerente
-      const sigCells = ['D29', 'K29', 'R29'];
-      [...nameCells, ...sigCells].forEach(c => worksheet.getCell(c).value = "");
-
-      // 6) Escribir solicitante en D28 (siempre)
-      worksheet.getCell('D28').value = requisicion.nombre_solicitante || "N/A";
-      worksheet.getCell('D29').value = ""; // firma solicitante (vacía)
-
-      // 7) Escribir director en K28 (prefiere dicSST si ambos existen por regla; si no, dicTYP)
-      // Si existen ambos directores (dicTYP y dicSST) mostrarlos en la misma celda separados por " / "
-      const directorParts = [];
-      if (usuariosPorCargo['dicTYP']) directorParts.push(usuariosPorCargo['dicTYP']);
-      if (usuariosPorCargo['dicSST']) directorParts.push(usuariosPorCargo['dicSST']);
-      worksheet.getCell('K28').value = directorParts.length > 0 ? directorParts.join(' / ') : "N/A";
-      worksheet.getCell('K29').value = ""; // firma director
-
-      // 8) Escribir gerente en R28 (preferir gerSST si ergonomico; gerTyC si tecnologico or role present)
-      // lógica simple: si gerSST existe y se pidió, usarlo; else gerTyC
-      const gerenteName =
-        usuariosPorCargo['gerSST'] ||
-        usuariosPorCargo['gerTyC'] ||
-        null;
-      worksheet.getCell('R28').value = gerenteName || "N/A";
-      worksheet.getCell('R29').value = ""; // firma gerente
-
-      // nota: si algún rol no fue encontrado en la BD se deja "N/A"
     } catch (err) {
-      console.warn("⚠️ Error calculando/aplicando aprobaciones en Excel (tabla única):", err);
+      console.warn("⚠️ Error calculando/aplicando aprobaciones:", err);
     }
 
     // 🔹 Guardar el Excel (igual que antes)
@@ -1408,49 +1474,6 @@ app.get("/api/requisiciones/:id/excel", authMiddleware, async (req, res) => {
   }
 });
 
-app.get("/api/requisiciones/:id/word", authMiddleware, async (req, res) => {
-  try {
-    const { id } = req.params;
-    const [reqRows] = await pool.query(
-      `SELECT id, nombre_solicitante, fecha, justificacion, area, sede, urgencia, valor_total FROM requisiciones WHERE id = ?`,
-      [id]
-    );
-    if (reqRows.length === 0) return res.status(404).json({ error: "No encontrado" });
-    const requisicion = reqRows[0];
-
-    const [productos] = await pool.query(
-      `SELECT nombre, descripcion, cantidad, valor_estimado FROM requisicion_productos WHERE requisicion_id = ?`,
-      [id]
-    );
-
-    const html = `
-      <html><head><meta charset="utf-8"></head><body>
-      <h1>Requisición #${requisicion.id}</h1>
-      <p><strong>Solicitante:</strong> ${requisicion.nombre_solicitante}</p>
-      <p><strong>Fecha:</strong> ${requisicion.fecha}</p>
-      <p><strong>Area:</strong> ${requisicion.area}</p>
-      <p><strong>Sede:</strong> ${requisicion.sede}</p>
-      <p><strong>Urgencia:</strong> ${requisicion.urgencia}</p>
-      <p><strong>Valor total:</strong> ${requisicion.valor_total}</p>
-      <h2>Productos</h2>
-      <table border="1" cellspacing="0" cellpadding="4">
-        <thead><tr><th>#</th><th>Producto</th><th>Descripcion</th><th>Cantidad</th><th>Valor estimado</th></tr></thead>
-        <tbody>
-        ${productos.map((p, i) => `<tr><td>${i + 1}</td><td>${p.nombre}</td><td>${p.descripcion}</td><td>${p.cantidad}</td><td>${p.valor_estimado}</td></tr>`).join("")}
-        </tbody>
-      </table>
-      </body></html>
-    `;
-
-    res.setHeader("Content-Type", "application/msword");
-    res.setHeader("Content-Disposition", `attachment; filename=requisicion_${id}.doc`);
-    res.send(html);
-  } catch (err) {
-    console.error("❌ Error generar Word requisición:", err);
-    res.status(500).json({ error: "Error al generar Word" });
-  }
-});
-
 // --- Nuevo endpoint: Devolver requisición para corrección ---
 app.post("/api/requisiciones/:id/devolver", authMiddleware, async (req, res) => {
   const { id } = req.params;
@@ -1654,3 +1677,18 @@ async function getApprovalProgress(requisicionId) {
     approvers
   };
 }
+
+// NUEVO: endpoint para devolver las aprobaciones (usar en frontend para filtrar por nombre de aprobador)
+app.get("/api/aprobaciones", authMiddleware, async (req, res) => {
+  try {
+    const [rows] = await pool.query(
+      `SELECT id, requisicion_id, area, rol_aprobador, nombre_aprobador, estado, orden, visible, fecha_aprobacion
+       FROM requisicion_aprobaciones
+       ORDER BY requisicion_id, orden`
+    );
+    res.json(rows);
+  } catch (err) {
+    console.error("❌ Error al obtener aprobaciones:", err);
+    res.status(500).json({ message: "Error al obtener aprobaciones" });
+  }
+});
