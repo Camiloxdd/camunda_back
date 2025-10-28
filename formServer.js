@@ -317,42 +317,112 @@ app.post("/api/requisicion/create", async (req, res) => {
       [valuesProductos]
     );
 
-    // 4️⃣ Determinar aprobaciones necesarias
     const SMLV = 1300000;
     const limite = SMLV * 10;
     const requiereAltas = valorTotal >= limite;
 
     const tieneErgonomico = productos.some((p) => p.ergonomico);
     const tieneTecnologico = productos.some((p) => p.compraTecnologica);
-
-    // Roles que se deben incluir (en orden jerárquico)
+    const areaSolicitante = solicitante?.area?.toUpperCase() || "";
     const rolesNecesarios = [];
 
-    if (tieneTecnologico) rolesNecesarios.push("dicTYP", "gerTyC");
-    if (tieneErgonomico) rolesNecesarios.push("dicSST", "gerSST");
-    if (requiereAltas && !presupuestada) rolesNecesarios.push("gerAdmin", "gerGeneral");
+    if (!tieneErgonomico && !tieneTecnologico) {
+      if (presupuestada) {
 
-    // 5️⃣ Buscar aprobadores reales desde la tabla users
+        if (areaSolicitante === "SST") rolesNecesarios.push("dicSST", "gerSST");
+        else if (areaSolicitante === "TYP") rolesNecesarios.push("dicTYP", "gerTyC");
+        else rolesNecesarios.push("gerAdmin");
+      } else if (!presupuestada && requiereAltas) {
+        if (areaSolicitante === "SST") {
+          rolesNecesarios.push("dicSST", "gerSST", "gerAdmin", "gerGeneral");
+        } else if (areaSolicitante === "TYP") {
+          rolesNecesarios.push("dicTYP", "gerTyC", "gerAdmin", "gerGeneral");
+        } else {
+          rolesNecesarios.push("gerAdmin", "gerGeneral");
+        }
+      } else {
+        if (areaSolicitante === "SST") rolesNecesarios.push("dicSST", "gerSST");
+        else if (areaSolicitante === "TYP") rolesNecesarios.push("dicTYP", "gerTyC");
+        else rolesNecesarios.push("gerAdmin");
+      }
+    }
+
+    else if (tieneErgonomico && tieneTecnologico) {
+      if (presupuestada) {
+        if (areaSolicitante === "SST") {
+          rolesNecesarios.push("dicSST", "gerSST", "gerTyC");
+        } else if (areaSolicitante === "TYP") {
+          rolesNecesarios.push("dicTYP", "gerTyC", "dicSST");
+        } else {
+          rolesNecesarios.push("dicSST", "gerSST", "dicTYP", "gerTyC");
+        }
+      } else {
+
+        if (areaSolicitante === "SST") {
+          rolesNecesarios.push("dicSST", "gerSST", "gerTyC", "gerAdmin", "gerGeneral");
+        } else if (areaSolicitante === "TYP") {
+          rolesNecesarios.push("dicTYP", "gerTyC", "dicSST", "gerAdmin", "gerGeneral");
+        } else {
+          rolesNecesarios.push("dicSST", "gerSST", "dicTYP", "gerTyC", "gerAdmin", "gerGeneral");
+        }
+      }
+    }
+
+
+    else if (tieneErgonomico && !tieneTecnologico) {
+      if (presupuestada) {
+        rolesNecesarios.push("dicSST", "gerSST");
+      } else {
+        rolesNecesarios.push("dicSST", "gerSST", "gerAdmin", "gerGeneral");
+      }
+    }
+
+
+    else if (!tieneErgonomico && tieneTecnologico) {
+      if (presupuestada) {
+        rolesNecesarios.push("dicTYP", "gerTyC");
+      } else {
+        rolesNecesarios.push("dicTYP", "gerTyC", "gerAdmin", "gerGeneral");
+      }
+    }
+
+
+    const uniqueRoles = [...new Set(rolesNecesarios)];
+
+    console.log("🧩 Roles necesarios asignados:", uniqueRoles);
+
     let aprobadores = [];
     if (rolesNecesarios.length > 0) {
       const [usuarios] = await pool.query(
         `SELECT nombre, cargo AS rol, area
-         FROM user
-         WHERE cargo IN (?)`,
+     FROM user
+     WHERE cargo IN (?)`,
         [rolesNecesarios]
       );
 
-      // Reordenar según el orden original de rolesNecesarios
-      aprobadores = rolesNecesarios
+      const areaSolicitante = solicitante?.area || "";
+
+      let ordenFinal = [];
+
+      if (areaSolicitante.toUpperCase() === "SST") {
+        ordenFinal = ["dicSST", "gerSST", "dicTYP", "gerTyC", "gerAdmin", "gerGeneral"];
+      } else if (areaSolicitante.toUpperCase() === "TYP") {
+        ordenFinal = ["dicTYP", "gerTyC", "dicSST", "gerSST", "gerAdmin", "gerGeneral"];
+      } else {
+        ordenFinal = ["dicSST", "gerSST", "dicTYP", "gerTyC", "gerAdmin", "gerGeneral"];
+      }
+
+      aprobadores = ordenFinal
+        .filter((rol) => rolesNecesarios.includes(rol))
         .map((rol) => usuarios.find((u) => u.rol === rol))
         .filter(Boolean);
     }
 
-    // 6️⃣ Insertar aprobaciones con orden y visibilidad
+
     for (let i = 0; i < aprobadores.length; i++) {
       const aprob = aprobadores[i];
       const orden = i + 1;
-      const visible = i === 0; // Solo el primero visible inicialmente
+      const visible = i === 0;
 
       await pool.query(
         `INSERT INTO requisicion_aprobaciones
@@ -376,16 +446,14 @@ app.post("/api/requisicion/create", async (req, res) => {
 
 app.get("/api/requisiciones/pendientes", authMiddleware, async (req, res) => {
   try {
-    const { nombre, cargo, area } = req.user; // viene del token o sesión
+    const { nombre, cargo, area } = req.user;
 
-    // Consultar bandera 'solicitante' y nombre real del usuario desde DB
     const [userRows] = await pool.query(
       "SELECT solicitante, nombre FROM user WHERE id = ?",
       [req.user.id]
     );
     const userRecord = userRows[0];
 
-    // Si el usuario es solicitante, devolver solo las requisiciones a su nombre
     if (userRecord && (userRecord.solicitante === 1 || userRecord.solicitante === true)) {
       const [requisicionesRows] = await pool.query(
         `
@@ -605,18 +673,52 @@ app.put("/api/requisiciones/:id/aprobar-items", authMiddleware, async (req, res)
 
     // 1️⃣ Actualizar estado de cada producto (aprobado/rechazado)
     for (const { id: productoId, aprobado, fecha_aprobado } of decisiones) {
-      await pool.query(
-        `
-        UPDATE requisicion_productos
-        SET aprobado = ?, fecha_aprobado = ?
-        WHERE id = ? AND requisicion_id = ?
-        `,
-        [aprobado ? "aprobado" : "rechazado", aprobado ? fecha_aprobado || new Date() : null, productoId, id]
-      );
+      if (aprobado) {
+        // ✅ Producto aprobado: mantener visible
+        await pool.query(
+          `
+          UPDATE requisicion_productos
+          SET aprobado = 'aprobado', fecha_aprobado = ?, visible = 1
+          WHERE id = ? AND requisicion_id = ?
+          `,
+          [fecha_aprobado || new Date(), productoId, id]
+        );
+      } else {
+        // ❌ Producto rechazado: marcar como rechazado y ocultarlo
+        await pool.query(
+          `
+          UPDATE requisicion_productos
+          SET aprobado = 'rechazado', fecha_aprobado = NULL, visible = 0
+          WHERE id = ? AND requisicion_id = ?
+          `,
+          [productoId, id]
+        );
+      }
     }
 
-    // 2️⃣ Calcular nuevo valor total SOLO con productos aprobados
-    // considerar aprobados que estén guardados como 'aprobado' O como 1 (legacy / boolean)
+    // 2️⃣ Contar total de productos
+    const [totalProductosRows] = await pool.query(
+      `SELECT COUNT(*) AS total FROM requisicion_productos WHERE requisicion_id = ?`,
+      [id]
+    );
+    const totalProductos = Number(totalProductosRows[0]?.total || 0);
+
+    // 3️⃣ Contar aprobados y rechazados
+    const [conteos] = await pool.query(
+      `
+      SELECT 
+        SUM(CASE WHEN aprobado = 'aprobado' OR aprobado = 1 THEN 1 ELSE 0 END) AS aprobados,
+        SUM(CASE WHEN aprobado = 'rechazado' THEN 1 ELSE 0 END) AS rechazados
+      FROM requisicion_productos
+      WHERE requisicion_id = ?
+      `,
+      [id]
+    );
+
+    const aprobados = Number(conteos[0]?.aprobados || 0);
+    const rechazados = Number(conteos[0]?.rechazados || 0);
+
+    // 4️⃣ Calcular nuevo total solo con productos aprobados
     const [rows] = await pool.query(
       `
       SELECT SUM(COALESCE(valor_estimado,0) * COALESCE(cantidad,1)) AS nuevo_total
@@ -625,43 +727,32 @@ app.put("/api/requisiciones/:id/aprobar-items", authMiddleware, async (req, res)
       `,
       [id]
     );
-
     const nuevoTotal = rows[0]?.nuevo_total || 0;
 
-    // 3️⃣ ACTUALIZAR SOLO valor_total por ahora (no cambiar status todavía)
-    await pool.query(
-      `UPDATE requisiciones SET valor_total = ? WHERE id = ?`,
-      [nuevoTotal, id]
-    );
+    // 5️⃣ Actualizar valor total
+    await pool.query(`UPDATE requisiciones SET valor_total = ? WHERE id = ?`, [nuevoTotal, id]);
 
-    // 4️⃣ Verificar si quedan productos aprobados
-    const [countRows] = await pool.query(
-      `SELECT COUNT(*) AS cnt FROM requisicion_productos WHERE requisicion_id = ? AND (aprobado = 'aprobado' OR aprobado = 1)`,
-      [id]
-    );
-    const approvedCount = Number(countRows[0]?.cnt || 0);
-
-    // 5️⃣ Si NO queda ningún producto aprobado -> marcar requisición como rechazada total, finalizar aprobaciones
-    if (approvedCount === 0) {
+    // 6️⃣ Si todos los productos fueron rechazados → requisición rechazada total
+    if (rechazados === totalProductos) {
       await pool.query(
         `UPDATE requisicion_aprobaciones SET estado = 'rechazada', visible = FALSE WHERE requisicion_id = ?`,
         [id]
       );
       await pool.query(
-        `UPDATE requisiones SET status = 'rechazada', valor_total = 0 WHERE id = ?`,
+        `UPDATE requisiciones SET status = 'rechazada', valor_total = 0 WHERE id = ?`,
         [id]
       );
 
-      console.log("Requisición marcada como RECHAZADA totalmente:", id);
+      console.log("❌ Requisición RECHAZADA totalmente:", id);
       return res.json({
-        message: "Requisición rechazada completamente. No quedan ítems aprobados.",
+        message: "Requisición rechazada completamente (todos los ítems fueron rechazados).",
         nuevo_total: 0,
-        pendientes: 0
+        pendientes: 0,
       });
     }
 
-    // 6️⃣ Si hay al menos un producto aprobado -> continuar flujo normal: marcar la aprobación del usuario actual y activar siguiente aprobador
-    const [result] = await pool.query(
+    // 7️⃣ Si hay aprobados → seguir flujo normal
+    await pool.query(
       `
       UPDATE requisicion_aprobaciones
       SET estado = 'aprobada', visible = FALSE, fecha_aprobacion = NOW()
@@ -670,11 +761,7 @@ app.put("/api/requisiciones/:id/aprobar-items", authMiddleware, async (req, res)
       [id, nombre, area]
     );
 
-    if (result.affectedRows === 0) {
-      return res.status(404).json({ message: "No se encontró aprobación correspondiente al usuario actual." });
-    }
-
-    // 7️⃣ Obtener el orden del aprobador actual
+    // Activar siguiente aprobador
     const [actual] = await pool.query(
       `
       SELECT orden
@@ -685,8 +772,6 @@ app.put("/api/requisiciones/:id/aprobar-items", authMiddleware, async (req, res)
     );
 
     const ordenActual = actual[0]?.orden;
-
-    // 8️⃣ Activar al siguiente aprobador (si existe)
     if (ordenActual) {
       await pool.query(
         `
@@ -698,22 +783,16 @@ app.put("/api/requisiciones/:id/aprobar-items", authMiddleware, async (req, res)
       );
     }
 
-    // 9️⃣ Verificar si quedan aprobaciones pendientes
+    // Revisar si quedan pendientes
     const [pendientesRows] = await pool.query(
       `SELECT COUNT(*) AS cnt FROM requisicion_aprobaciones WHERE requisicion_id = ? AND estado = 'pendiente'`,
       [id]
     );
-
     const pendientesCount = pendientesRows[0]?.cnt || 0;
 
-    // 10️⃣ Decidir estado final de la requisición:
-    // - si no quedan aprobaciones pendientes y hay items aprobados => 'aprobada'
-    // - en cualquier otro caso dejar 'pendiente' (o el flujo ya activado)
-    if (pendientesCount === 0 && approvedCount > 0) {
-      await pool.query(
-        `UPDATE requisiciones SET status = 'aprobada' WHERE id = ?`,
-        [id]
-      );
+    // Si ya no hay pendientes y hay aprobados → marcar como aprobada
+    if (pendientesCount === 0 && aprobados > 0) {
+      await pool.query(`UPDATE requisiciones SET status = 'aprobada' WHERE id = ?`, [id]);
     }
 
     console.log("✅ Requisición procesada correctamente:", id);
@@ -721,7 +800,8 @@ app.put("/api/requisiciones/:id/aprobar-items", authMiddleware, async (req, res)
     res.json({
       message: "Operación registrada correctamente.",
       nuevo_total: nuevoTotal,
-      pendientes: pendientesCount
+      aprobados,
+      rechazados,
     });
   } catch (error) {
     console.error("❌ Error al aprobar/rechazar ítems:", error);
@@ -1412,7 +1492,7 @@ app.delete("/api/requisiciones/:id", authMiddleware, async (req, res) => {
 app.put("/api/requisiciones/:id", authMiddleware, async (req, res) => {
   try {
     const { id } = req.params;
-    const { nombre_solicitante, fecha, justificacion, area, sede, urgencia, presupuestada } = req.body;
+    const { nombre_solicitante, fecha, justificacion, area, sede, urgencia, presupuestada, va } = req.body;
     await pool.query(
       `UPDATE requisiciones SET nombre_solicitante=?, fecha=?, justificacion=?, area=?, sede=?, urgencia=?, presupuestada=? WHERE id=?`,
       [nombre_solicitante, fecha, justificacion, area, sede, urgencia, presupuestada ? 1 : 0, id]
