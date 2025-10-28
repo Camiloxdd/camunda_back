@@ -120,7 +120,7 @@ CREATE TABLE `requisicion_aprobaciones` (
   PRIMARY KEY (`id`),
   KEY `requisicion_id` (`requisicion_id`),
   CONSTRAINT `requisicion_aprobaciones_ibfk_1` FOREIGN KEY (`requisicion_id`) REFERENCES `requisiciones` (`id`) ON DELETE CASCADE
-) ENGINE=InnoDB AUTO_INCREMENT=321 DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci;
+) ENGINE=InnoDB AUTO_INCREMENT=386 DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci;
 /*!40101 SET character_set_client = @saved_cs_client */;
 
 --
@@ -129,7 +129,7 @@ CREATE TABLE `requisicion_aprobaciones` (
 
 LOCK TABLES `requisicion_aprobaciones` WRITE;
 /*!40000 ALTER TABLE `requisicion_aprobaciones` DISABLE KEYS */;
-INSERT INTO `requisicion_aprobaciones` VALUES (309,85,'TyP','dicTYP','Diego Alfonso Diaz Devia',0,'2025-10-27 14:02:19','aprobada',0,0,0,0,0,0,1,0),(310,85,'TyP','gerTyC','Wilson Ricardo Marulanda Niño',0,'2025-10-27 14:02:46','aprobada',0,0,0,0,0,0,2,0),(311,85,'SST','dicSST','Nelly Paola Coca Sierra',0,'2025-10-27 14:03:02','aprobada',0,0,0,0,0,0,3,0),(312,85,'SST','gerSST','Edison Kenneth Campos Avila',0,'2025-10-27 14:03:14','aprobada',0,0,0,0,0,0,4,0),(313,85,'GerenciaAdmin','gerAdmin','Carlos Alfonso López Vargas',0,'2025-10-27 14:03:24','aprobada',0,0,0,0,0,0,5,0),(314,85,'GerenciaGeneral','gerGeneral','Daniel Alejandro Quiros Bertocchi',0,'2025-10-27 14:03:35','aprobada',0,0,0,0,0,0,6,0),(315,86,'TyP','dicTYP','Diego Alfonso Diaz Devia',0,'2025-10-27 15:07:03','aprobada',0,0,0,0,0,0,1,0),(316,86,'TyP','gerTyC','Wilson Ricardo Marulanda Niño',0,'2025-10-27 15:07:32','aprobada',0,0,0,0,0,0,2,0),(317,86,'SST','dicSST','Nelly Paola Coca Sierra',0,'2025-10-27 15:07:48','aprobada',0,0,0,0,0,0,3,0),(318,86,'SST','gerSST','Edison Kenneth Campos Avila',0,'2025-10-27 15:07:55','aprobada',0,0,0,0,0,0,4,0),(319,86,'GerenciaAdmin','gerAdmin','Carlos Alfonso López Vargas',0,'2025-10-27 15:08:21','aprobada',0,0,0,0,0,0,5,0),(320,86,'GerenciaGeneral','gerGeneral','Daniel Alejandro Quiros Bertocchi',0,'2025-10-27 15:08:55','aprobada',0,0,0,0,0,0,6,0);
+INSERT INTO `requisicion_aprobaciones` VALUES (361,107,'TyP','dicTYP','Diego Alfonso Diaz Devia',0,NULL,'pendiente',0,0,0,0,0,0,1,1),(362,107,'TyP','gerTyC','Wilson Ricardo Marulanda Niño',0,NULL,'pendiente',0,0,0,0,0,0,2,0),(363,108,'TyP','dicTYP','Diego Alfonso Diaz Devia',0,NULL,'pendiente',0,0,0,0,0,0,1,1),(364,108,'TyP','gerTyC','Wilson Ricardo Marulanda Niño',0,NULL,'pendiente',0,0,0,0,0,0,2,0),(365,108,'GerenciaAdmin','gerAdmin','Carlos Alfonso López Vargas',0,NULL,'pendiente',0,0,0,0,0,0,3,0),(366,108,'GerenciaGeneral','gerGeneral','Daniel Alejandro Quiros Bertocchi',0,NULL,'pendiente',0,0,0,0,0,0,4,0),(367,109,'TyP','dicTYP','Diego Alfonso Diaz Devia',0,'2025-10-28 13:34:13','aprobada',0,0,0,0,0,0,1,0),(368,109,'TyP','gerTyC','Wilson Ricardo Marulanda Niño',0,'2025-10-28 13:34:50','aprobada',0,0,0,0,0,0,2,0),(369,109,'SST','dicSST','Nelly Paola Coca Sierra',0,'2025-10-28 13:41:02','aprobada',0,0,0,0,0,0,3,0),(370,110,'TyP','dicTYP','Diego Alfonso Diaz Devia',0,NULL,'pendiente',0,0,0,0,0,0,1,1),(371,110,'TyP','gerTyC','Wilson Ricardo Marulanda Niño',0,NULL,'pendiente',0,0,0,0,0,0,2,0),(372,110,'SST','dicSST','Nelly Paola Coca Sierra',0,NULL,'pendiente',0,0,0,0,0,0,3,0),(373,110,'GerenciaAdmin','gerAdmin','Carlos Alfonso López Vargas',0,NULL,'pendiente',0,0,0,0,0,0,4,0),(374,110,'GerenciaGeneral','gerGeneral','Daniel Alejandro Quiros Bertocchi',0,NULL,'pendiente',0,0,0,0,0,0,5,0),(375,111,'SST','dicSST','Nelly Paola Coca Sierra',0,NULL,'rechazada',0,0,0,0,0,0,1,0),(376,111,'SST','gerSST','Edison Kenneth Campos Avila',0,NULL,'rechazada',0,0,0,0,0,0,2,0),(377,112,'SST','dicSST','Nelly Paola Coca Sierra',0,'2025-10-28 13:42:42','aprobada',0,0,0,0,0,0,1,0),(378,112,'SST','gerSST','Edison Kenneth Campos Avila',0,NULL,'pendiente',0,0,0,0,0,0,2,1),(379,112,'GerenciaAdmin','gerAdmin','Carlos Alfonso López Vargas',0,NULL,'pendiente',0,0,0,0,0,0,3,0),(380,112,'GerenciaGeneral','gerGeneral','Daniel Alejandro Quiros Bertocchi',0,NULL,'pendiente',0,0,0,0,0,0,4,0),(381,113,'TyP','dicTYP','Diego Alfonso Diaz Devia',0,'2025-10-28 12:27:36','aprobada',0,0,0,0,0,0,1,0),(382,113,'TyP','gerTyC','Wilson Ricardo Marulanda Niño',0,'2025-10-28 12:28:04','aprobada',0,0,0,0,0,0,2,0),(383,113,'SST','dicSST','Nelly Paola Coca Sierra',0,'2025-10-28 12:29:10','aprobada',0,0,0,0,0,0,3,0),(384,113,'GerenciaAdmin','gerAdmin','Carlos Alfonso López Vargas',0,'2025-10-28 12:29:25','aprobada',0,0,0,0,0,0,4,0),(385,113,'GerenciaGeneral','gerGeneral','Daniel Alejandro Quiros Bertocchi',0,'2025-10-28 12:29:32','aprobada',0,0,0,0,0,0,5,0);
 /*!40000 ALTER TABLE `requisicion_aprobaciones` ENABLE KEYS */;
 UNLOCK TABLES;
 
@@ -149,6 +149,7 @@ CREATE TABLE `requisicion_productos` (
   `descripcion` text,
   `compra_tecnologica` tinyint(1) DEFAULT '0',
   `ergonomico` tinyint(1) DEFAULT '0',
+  `visible` tinyint DEFAULT NULL,
   `valor_estimado` decimal(12,2) DEFAULT NULL,
   `centro_costo` varchar(100) DEFAULT NULL,
   `cuenta_contable` varchar(100) DEFAULT NULL,
@@ -156,7 +157,7 @@ CREATE TABLE `requisicion_productos` (
   PRIMARY KEY (`id`),
   KEY `requisicion_id` (`requisicion_id`),
   CONSTRAINT `requisicion_productos_ibfk_1` FOREIGN KEY (`requisicion_id`) REFERENCES `requisiciones` (`id`) ON DELETE CASCADE
-) ENGINE=InnoDB AUTO_INCREMENT=133 DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci;
+) ENGINE=InnoDB AUTO_INCREMENT=191 DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci;
 /*!40101 SET character_set_client = @saved_cs_client */;
 
 --
@@ -165,7 +166,7 @@ CREATE TABLE `requisicion_productos` (
 
 LOCK TABLES `requisicion_productos` WRITE;
 /*!40000 ALTER TABLE `requisicion_productos` DISABLE KEYS */;
-INSERT INTO `requisicion_productos` VALUES (129,85,'PC',1,'2025-10-27T19:03:35.071Z','PC',1,0,15000000.00,'123456','123456','aprobado'),(130,85,'Silla',1,'2025-10-27T19:03:35.071Z','Silla',0,1,15000000.00,'123456','123456','aprobado'),(131,86,'PC',1,'2025-10-27T20:08:55.323Z','PC',1,0,15000000.00,'asd','asd','aprobado'),(132,86,'Silla',1,'2025-10-27T20:08:55.323Z','Silla',0,1,15000000.00,'asd','asd','aprobado');
+INSERT INTO `requisicion_productos` VALUES (170,108,'Computador',1,NULL,'por que si',0,0,NULL,15000000.00,'123456','123456','pendiente'),(171,108,'Mouse',1,NULL,'por que si',0,0,NULL,35000.00,'123456','123456','pendiente'),(172,109,'PC',1,NULL,'por que si',1,0,NULL,15000000.00,'123456','123456','pendiente'),(173,109,'Silla',1,NULL,'por que si',0,1,0,6500000.00,'123456','123456','rechazado'),(174,110,'PC',1,NULL,'por que si',1,0,NULL,15000000.00,'123456','123456','pendiente'),(175,110,'Silla',1,NULL,'123456',0,1,NULL,6500000.00,'123456','123456','pendiente'),(176,111,'Silla',1,NULL,'pormque si',0,1,0,15500000.00,'123456','123456','rechazado'),(177,112,'Silla',1,'2025-10-28T18:42:42.064Z','por que si',0,1,1,15000000.00,'123546','123546','aprobado'),(178,113,'Pantalla',1,'2025-10-28T17:29:32.701Z','pantalla',1,0,1,400000.00,'123456','123456','aprobado'),(179,113,'Brazo para computador',1,'2025-10-28T17:29:32.701Z','Brazo para computador',1,0,1,250000.00,'123456','123456','aprobado'),(180,113,'Base refrigerante',1,'2025-10-28T17:29:32.701Z','Base refrigerante',1,0,1,200000.00,'123456','123456','aprobado'),(181,113,'Licencias Office',1,'2025-10-28T17:29:32.701Z','Licencias Office',1,0,1,100000.00,'123456','123456','aprobado'),(182,113,'Descansa pies',1,'2025-10-28T17:29:32.701Z','Descansa pies',0,1,1,20000000.00,'123456','123456','aprobado'),(183,113,'Teclado ergonomico',1,'2025-10-28T17:29:32.701Z','Teclado ergonomico',0,1,1,40000000.00,'123456','123456','aprobado'),(184,113,'Carro 0 km corvette',1,'2025-10-28T17:29:32.701Z','Carro 0 km corvette',0,0,1,200000000.00,'123456','123456','aprobado'),(189,107,'Computador',1,NULL,'por que si',0,0,NULL,25000000.00,'123456','123456',NULL),(190,107,'Mouse',1,NULL,'por que si',0,0,NULL,35000000.00,'123456','123456',NULL);
 /*!40000 ALTER TABLE `requisicion_productos` ENABLE KEYS */;
 UNLOCK TABLES;
 
@@ -192,7 +193,7 @@ CREATE TABLE `requisiciones` (
   `created_at` timestamp NULL DEFAULT CURRENT_TIMESTAMP,
   `status` varchar(50) DEFAULT 'pendiente',
   PRIMARY KEY (`id`)
-) ENGINE=InnoDB AUTO_INCREMENT=87 DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci;
+) ENGINE=InnoDB AUTO_INCREMENT=114 DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci;
 /*!40101 SET character_set_client = @saved_cs_client */;
 
 --
@@ -201,7 +202,7 @@ CREATE TABLE `requisiciones` (
 
 LOCK TABLES `requisiciones` WRITE;
 /*!40000 ALTER TABLE `requisiciones` DISABLE KEYS */;
-INSERT INTO `requisiciones` VALUES (85,NULL,'Juan Camilo Bello Roa','2025-10-27','2025-10-30','3 Dias habiles','','TyP','cota','Baja',0,30000000,'2025-10-27 19:01:52','Totalmente Aprobada'),(86,NULL,'Juan Camilo Bello Roa','2025-10-27','2025-10-29','1 Dia habiles','','SST','cota','Baja',0,30000000,'2025-10-27 20:06:49','Totalmente Aprobada');
+INSERT INTO `requisiciones` VALUES (107,NULL,'Juan Camilo Bello Roa','2025-10-28','2025-10-29','1','','TyP','cota','Baja',1,60000000,'2025-10-28 16:55:08','pendiente'),(108,NULL,'Juan Camilo Bello Roa','2025-10-28','2025-10-29','1 Dia','','TyP','cota','Baja',0,15035000,'2025-10-28 16:56:54','pendiente'),(109,NULL,'Juan Camilo Bello Roa','2025-10-28','2025-10-29','1','','TyP','cota','Baja',1,15000000,'2025-10-28 16:58:45','aprobada'),(110,NULL,'Juan Camilo Bello Roa','2025-10-28','2025-10-29','1 ','','TyP','cota','Baja',0,21500000,'2025-10-28 17:00:37','pendiente'),(111,NULL,'Juan Camilo Bello Roa','2025-10-28','2025-10-29','1','','TyP','cota','Baja',1,0,'2025-10-28 17:03:13','rechazada'),(112,NULL,'Juan Camilo Bello Roa','2025-10-28','2025-10-29','1','','TyP','cota','Baja',0,15000000,'2025-10-28 17:03:57','pendiente'),(113,NULL,'Santiago Barinas','2025-10-28','2025-10-29','1','','TyP','cota','Baja',0,260950000,'2025-10-28 17:26:34','Totalmente Aprobada');
 /*!40000 ALTER TABLE `requisiciones` ENABLE KEYS */;
 UNLOCK TABLES;
 
@@ -226,7 +227,7 @@ CREATE TABLE `user` (
   `solicitante` tinyint(1) DEFAULT '0',
   `comprador` tinyint(1) DEFAULT '0',
   PRIMARY KEY (`id`)
-) ENGINE=InnoDB AUTO_INCREMENT=12 DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci;
+) ENGINE=InnoDB AUTO_INCREMENT=13 DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci;
 /*!40101 SET character_set_client = @saved_cs_client */;
 
 --
@@ -235,7 +236,7 @@ CREATE TABLE `user` (
 
 LOCK TABLES `user` WRITE;
 /*!40000 ALTER TABLE `user` DISABLE KEYS */;
-INSERT INTO `user` VALUES (2,'Edison Kenneth Campos Avila','k.campos@coopidrogas.com.co','$2b$10$PysxFk8frdIJp3aa/TigL.K3Z9kwgl5IIsyEwPNi74hYZqKJADbW.','gerSST','3224399893','SST','cota',0,1,0,0),(3,'Nelly Paola Coca Sierra','n.coca@coopidrogas.com.co','$2b$10$42fHo1pc3yXs2W470SqGL.GXLhj85p/12B0OpCV3s6tYjfyngIvxS','dicSST','','SST','cota',0,1,0,0),(5,'Daniel Alejandro Quiros Bertocchi','gerenciaGeneralTesting@coopidrogas.com.co','$2b$10$y5XPDf1quHo0C6R3e0/c8ulhRh1qLk6vddZr4h8WR5QXynQztKxpG','gerGeneral','3224399893','GerenciaGeneral','cota',0,1,0,0),(6,'Diego Alfonso Diaz Devia','d.diaz@coopidrogas.com.co','$2b$10$7gDyQfoc.HzNG/z.9jLIzuEsFS/7WFFxN0RpyYvJ8a2hZu9gQb6Tu','dicTYP','3125874818','TyP','cota',0,1,0,0),(7,'Wilson Ricardo Marulanda Niño','w.marulanda@coopidrogas.com.co','$2b$10$RPL79cMse7ZT5UeDFUSukOlb3p7AnzKX3ZkIF86pXAvU0q5Ik1wXe','gerTyC','123456789','TyP','cota',0,1,0,0),(8,'Juan Camilo Bello Roa','pract7.desarrollo@coopidrogas.com.co','$2b$10$HYbiZaqdninuxTJScI0ceOP1gs0MTWlvY9jV7TMiMBXMLhEz6Pqza','analistaQA','','SST','cota',0,0,1,0),(9,'Carlos Alfonso López Vargas','gerenciaAdminTesting@coopidrogas.com.co','$2b$10$amRejwiMpAQwoSUZHz208OrITxycmf1kh8/1C452W6EUxuPfT4LW.','gerAdmin','ASDASD','GerenciaAdmin','cota',0,1,0,0),(11,'elpepe','elpepe@gmail.com','$2b$10$GGq3wG9o4Grturpl.3Aqg.yQDyeUqhGwbAll7QE3Uc8C2Kp9Fe0xW','analistaQA','5445454242','TyP','medellin',1,0,0,1);
+INSERT INTO `user` VALUES (2,'Edison Kenneth Campos Avila','k.campos@coopidrogas.com.co','$2b$10$PysxFk8frdIJp3aa/TigL.K3Z9kwgl5IIsyEwPNi74hYZqKJADbW.','gerSST','3224399893','SST','cota',0,1,0,0),(3,'Nelly Paola Coca Sierra','n.coca@coopidrogas.com.co','$2b$10$42fHo1pc3yXs2W470SqGL.GXLhj85p/12B0OpCV3s6tYjfyngIvxS','dicSST','','SST','cota',0,1,0,0),(5,'Daniel Alejandro Quiros Bertocchi','gerenciaGeneralTesting@coopidrogas.com.co','$2b$10$y5XPDf1quHo0C6R3e0/c8ulhRh1qLk6vddZr4h8WR5QXynQztKxpG','gerGeneral','3224399893','GerenciaGeneral','cota',0,1,0,0),(6,'Diego Alfonso Diaz Devia','d.diaz@coopidrogas.com.co','$2b$10$7gDyQfoc.HzNG/z.9jLIzuEsFS/7WFFxN0RpyYvJ8a2hZu9gQb6Tu','dicTYP','3125874818','TyP','cota',0,1,0,0),(7,'Wilson Ricardo Marulanda Niño','w.marulanda@coopidrogas.com.co','$2b$10$RPL79cMse7ZT5UeDFUSukOlb3p7AnzKX3ZkIF86pXAvU0q5Ik1wXe','gerTyC','123456789','TyP','cota',0,1,0,0),(8,'Juan Camilo Bello Roa','pract7.desarrollo@coopidrogas.com.co','$2b$10$HYbiZaqdninuxTJScI0ceOP1gs0MTWlvY9jV7TMiMBXMLhEz6Pqza','analistaQA','','TyP','cota',0,0,1,0),(9,'Carlos Alfonso López Vargas','gerenciaAdminTesting@coopidrogas.com.co','$2b$10$amRejwiMpAQwoSUZHz208OrITxycmf1kh8/1C452W6EUxuPfT4LW.','gerAdmin','ASDASD','GerenciaAdmin','cota',0,1,0,0),(11,'elpepe','elpepe@gmail.com','$2b$10$GGq3wG9o4Grturpl.3Aqg.yQDyeUqhGwbAll7QE3Uc8C2Kp9Fe0xW','analistaQA','5445454242','SST','medellin',1,0,0,1),(12,'Santiago Barinas','pract6.desarrollo@coopidrogas.com.co','$2b$10$ZZulhbPzhN0wVT91iva4yuoOb8jpXueLejQtpecHV2CHb0Mufa5x6','analistaQA','3214961814','TyP','cota',0,0,1,0);
 /*!40000 ALTER TABLE `user` ENABLE KEYS */;
 UNLOCK TABLES;
 /*!40103 SET TIME_ZONE=@OLD_TIME_ZONE */;
@@ -248,4 +249,4 @@ UNLOCK TABLES;
 /*!40101 SET COLLATION_CONNECTION=@OLD_COLLATION_CONNECTION */;
 /*!40111 SET SQL_NOTES=@OLD_SQL_NOTES */;
 
--- Dump completed on 2025-10-27 15:56:50
+-- Dump completed on 2025-10-28 15:52:09
