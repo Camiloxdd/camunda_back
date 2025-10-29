@@ -272,7 +272,7 @@ app.delete("/api/user/delete/:id", authMiddleware, async (req, res) => {
 //CREAR REQUISICION
 app.post("/api/requisicion/create", async (req, res) => {
   try {
-    const { solicitante, productos } = req.body;
+    const { solicitante, productos, processInstanceKey } = req.body;
 
     if (!solicitante || !productos?.length) {
       return res.status(400).json({ message: "Datos incompletos en la solicitud" });
@@ -289,9 +289,9 @@ app.post("/api/requisicion/create", async (req, res) => {
     // 2️⃣ Insertar la requisición (ahora incluye status)
     const [reqResult] = await pool.query(
       `INSERT INTO requisiciones 
-       (nombre_solicitante, fecha, fecha_requerido_entrega, tiempoAproximadoGestion, justificacion, area, sede, urgencia, presupuestada, valor_total, status) 
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-      [nombre, fecha, fechaRequeridoEntrega, tiempoAproximadoGestion, justificacion, area, sede, urgencia, presupuestada, valorTotal, 'pendiente']
+       (nombre_solicitante, fecha, fecha_requerido_entrega, tiempoAproximadoGestion, justificacion, area, sede, urgencia, presupuestada, valor_total, status, process_instance_key) 
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      [nombre, fecha, fechaRequeridoEntrega, tiempoAproximadoGestion, justificacion, area, sede, urgencia, presupuestada, valorTotal, 'pendiente', processInstanceKey]
     );
 
     const requisicionId = reqResult.insertId;
@@ -642,23 +642,59 @@ app.put("/api/requisiciones/:id/aprobar-items", authMiddleware, async (req, res)
     const approvedCount = Number(countRows[0]?.cnt || 0);
 
     // 5️⃣ Si NO queda ningún producto aprobado -> marcar requisición como rechazada total, finalizar aprobaciones
+    // 5️⃣ Si NO queda ningún producto aprobado -> marcar requisición como rechazada total, finalizar aprobaciones
     if (approvedCount === 0) {
+      // verificar cuántos productos tenía originalmente
+      const [totalProds] = await pool.query(
+        `SELECT COUNT(*) AS total FROM requisicion_productos WHERE requisicion_id = ?`,
+        [id]
+      );
+      const totalProductos = Number(totalProds[0]?.total || 0);
+
+      // obtener processInstanceKey de la requisición
+      const [proc] = await pool.query(
+        `SELECT process_instance_key FROM requisiciones WHERE id = ?`,
+        [id]
+      );
+      const processInstanceKey = proc[0]?.process_instance_key;
+
+      // actualizar base de datos
       await pool.query(
         `UPDATE requisicion_aprobaciones SET estado = 'rechazada', visible = FALSE WHERE requisicion_id = ?`,
         [id]
       );
       await pool.query(
-        `UPDATE requisiones SET status = 'rechazada', valor_total = 0 WHERE id = ?`,
+        `UPDATE requisiciones SET status = 'rechazada', valor_total = 0 WHERE id = ?`,
         [id]
       );
 
       console.log("Requisición marcada como RECHAZADA totalmente:", id);
+
+      // 🧨 Si solo había 1 producto y existe processInstanceKey -> cancelar proceso en Camunda
+      // 🧨 Si solo había 1 producto y existe processInstanceKey -> cancelar proceso en Camunda
+      if (totalProductos === 1 && processInstanceKey) {
+        try {
+          const cancelRes = await fetch(
+            `http://localhost:4000/api/process/${processInstanceKey}/cancel`, // ✅ usa el endpoint correcto
+            { method: "POST" } // ✅ usa POST, no DELETE
+          );
+
+          if (!cancelRes.ok) throw new Error("No se pudo cancelar proceso Camunda");
+
+          console.log(`🚫 Proceso Camunda ${processInstanceKey} cancelado correctamente.`);
+        } catch (err) {
+          console.error("⚠️ Error al cancelar proceso Camunda:", err);
+        }
+      }
+
+
       return res.json({
         message: "Requisición rechazada completamente. No quedan ítems aprobados.",
         nuevo_total: 0,
         pendientes: 0
       });
     }
+
 
     // 6️⃣ Si hay al menos un producto aprobado -> continuar flujo normal: marcar la aprobación del usuario actual y activar siguiente aprobador
     const [result] = await pool.query(
@@ -1347,6 +1383,30 @@ app.post("/api/tasks/:userTaskKey/complete", async (req, res) => {
     res.status(500).json({ error: err.response?.data || err.message });
   }
 });
+
+app.post("/api/process/:processInstanceKey/cancel", async (req, res) => {
+  const { processInstanceKey } = req.params;
+  try {
+    const token = await getAccessToken();
+
+    const response = await axios.post(
+      `${CAMUNDA_ZEEBE_URL}/v2/process-instances/${processInstanceKey}/cancellation`,
+      {},
+      {
+        headers: {
+          Authorization: `Bearer ${token}`,
+          "Content-Type": "application/json",
+        },
+      }
+    );
+
+    res.json({ message: "Proceso cancelado correctamente", response: response.data });
+  } catch (error) {
+    console.error("❌ Error al cancelar proceso:", error.response?.data || error.message);
+    res.status(500).json({ error: "Error al cancelar el proceso" });
+  }
+});
+
 
 
 app.listen(4000, () => {
