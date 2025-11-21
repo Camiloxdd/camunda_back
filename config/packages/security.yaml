@@ -1,0 +1,39 @@
+security:
+    password_hashers:
+        App\Entity\User:
+            algorithm: bcrypt
+
+    providers:
+        app_user_provider:
+            entity:
+                class: App\Entity\User
+                property: correo   # 👈 tu campo en la BD
+
+    firewalls:
+        dev:
+            pattern: ^/(_(profiler|wdt)|css|images|js)/
+            security: false
+
+        # 🔓 Ruta pública: /api/auth/login
+        login:
+            pattern: ^/api/auth/login
+            stateless: true
+            security: false
+
+        # 🔒 Firewall para todo el resto del API
+        api:
+            pattern: ^/api/
+            stateless: true
+            provider: app_user_provider
+            jwt: ~     # 👈 activa autenticación JWT para este firewall
+
+    access_control:
+        # Rutas públicas (no requieren token)
+        - { path: ^/api/auth/login, roles: PUBLIC_ACCESS }
+
+        # Puedes agregar más rutas públicas si lo necesitas:
+        # - { path: ^/api/report/send-daily, roles: PUBLIC_ACCESS }
+        # - { path: ^/api/azure/sync, roles: PUBLIC_ACCESS }
+
+        # 🔒 Todas las demás rutas /api/ requieren autenticación
+        - { path: ^/api, roles: IS_AUTHENTICATED_FULLY }
