@@ -1,158 +1,186 @@
 <?php
+
 namespace App\Service;
 
 use Symfony\Contracts\HttpClient\HttpClientInterface;
 
 class CamundaService
 {
-    private HttpClientInterface $client;
+    private string $zeebeUrl;
+    private string $tasklistUrl;
     private string $authUrl;
     private string $clientId;
     private string $clientSecret;
     private string $audience;
-    private string $tasklistBaseUrl;
-    private string $zeebeBaseUrl;
 
-    public function __construct(HttpClientInterface $client)
+    private HttpClientInterface $http;
+
+    public function __construct(HttpClientInterface $http)
     {
-        $this->client = $client;
+        $this->http          = $http;
+        $this->zeebeUrl      = $_ENV['CAMUNDA_ZEEBE_URL'];
+        $this->tasklistUrl   = $_ENV['CAMUNDA_TASKLIST_BASE_URL'];
 
-        // Leer desde env (ajusta si prefieres ParameterBagInterface / %env()%)
-        $this->authUrl = $_ENV['ZEEBE_AUTHORIZATION_SERVER_URL'] ?? 'https://login.cloud.camunda.io/oauth/token';
-        $this->clientId = $_ENV['ZEEBE_CLIENT_ID'] ?? '';
-        $this->clientSecret = $_ENV['ZEEBE_CLIENT_SECRET'] ?? '';
-        $this->audience = $_ENV['ZEEBE_AUDIENCE'] ?? ($_ENV['AUDIENCE'] ?? 'tasklist.camunda.io');
-        $this->tasklistBaseUrl = $_ENV['CAMUNDA_TASKLIST_BASE_URL'] ?? 'https://sin-1.tasklist.camunda.io/e124b5cc-12b1-4b3b-be0e-6b18860d1230';
-        $this->zeebeBaseUrl = $_ENV['CAMUNDA_ZEEBE_URL'] ?? 'https://sin-1.zeebe.camunda.io/e124b5cc-12b1-4b3b-be0e-6b18860d1230';
+        // 🔥 variables correctas de Camunda 8 SaaS
+        $this->authUrl       = $_ENV['ZEEBE_AUTHORIZATION_SERVER_URL'];
+        $this->clientId      = $_ENV['ZEEBE_CLIENT_ID'];
+        $this->clientSecret  = $_ENV['ZEEBE_CLIENT_SECRET'];
+        $this->audience      = $_ENV['AUDIENCE'];
     }
 
     private function getAccessToken(): string
     {
-        $body = http_build_query([
-            'grant_type' => 'client_credentials',
-            'audience' => $this->audience,
-            'client_id' => $this->clientId,
-            'client_secret' => $this->clientSecret,
+        $response = $this->http->request("POST", $this->authUrl, [
+            'headers' => [
+                'Content-Type' => 'application/x-www-form-urlencoded'
+            ],
+            'body' => [
+                'grant_type'    => 'client_credentials',
+                'client_id'     => $this->clientId,
+                'client_secret' => $this->clientSecret,
+                'audience'      => $this->audience
+            ]
         ]);
 
-        $response = $this->client->request('POST', $this->authUrl, [
-            'headers' => ['Content-Type' => 'application/x-www-form-urlencoded'],
-            'body' => $body,
-        ]);
+        $data = $response->toArray(false);
 
-        $content = $response->getContent(false);
-        $data = json_decode($content, true);
-        if (empty($data['access_token'])) {
-            throw new \RuntimeException('No access token returned from Camunda auth: ' . substr($content, 0, 200));
+        if (!isset($data['access_token'])) {
+            throw new \Exception('No se pudo obtener token de Camunda: ' . json_encode($data));
         }
+
         return $data['access_token'];
     }
 
-    // Nuevo: helper equivalente al snippet JS (POST form-url-encoded -> devuelve access_token)
-    public function getAccessTokenViaForm(): string
+    public function startProcess(array $variables, int $version = null)
     {
-        $params = [
-            'grant_type'    => 'client_credentials',
-            'audience'      => $this->audience,
-            'client_id'     => $this->clientId,
-            'client_secret' => $this->clientSecret,
+        $token = $this->getAccessToken();
+
+        $payload = [
+            "processDefinitionId" => "Process_1a2wlvt",
+            "variables" => $this->normalizeVariables($variables),
         ];
 
-        $response = $this->client->request('POST', $this->authUrl, [
-            'headers' => ['Content-Type' => 'application/x-www-form-urlencoded'],
-            'body'    => http_build_query($params),
-        ]);
-
-        $content = $response->getContent(false);
-        $data = json_decode($content, true);
-
-        if (empty($data['access_token'])) {
-            $msg = is_string($content) ? substr($content, 0, 1000) : '';
-            throw new \RuntimeException('No access token returned from Camunda auth: ' . $msg);
+        if ($version !== null) {
+            $payload["version"] = $version;
         }
 
-        return $data['access_token'];
-    }
-
-    public function startProcess(string $processDefinitionId, array $variables = []): array
-    {
-        $token = $this->getAccessToken();
-        $url = rtrim($this->zeebeBaseUrl, '/') . '/v2/process-instances';
-        $payload = ['processDefinitionId' => $processDefinitionId, 'variables' => (object)$variables];
-
-        $response = $this->client->request('POST', $url, [
-            'headers' => [
-                'Authorization' => "Bearer {$token}",
-                'Content-Type' => 'application/json',
+        $resp = $this->http->request("POST", "$this->zeebeUrl/v2/process-instances", [
+            "headers" => [
+                "Authorization" => "Bearer $token",
+                "Content-Type" => "application/json"
             ],
-            'json' => $payload,
+            "json" => $payload
         ]);
 
-        return json_decode($response->getContent(), true);
+        return $resp->toArray(false);
     }
 
-    public function startRevision(array $variables = []): array
+    private function normalizeVariables(array $variables): array|object
     {
-        $token = $this->getAccessToken();
-        $url = rtrim($this->zeebeBaseUrl, '/') . '/v2/process-instances';
-        $payload = ['processDefinitionId' => 'Process_1pw9wvj', 'version' => -1, 'variables' => (object)$variables];
+        if ($variables === []) {
+            return new \stdClass();
+        }
 
-        $response = $this->client->request('POST', $url, [
-            'headers' => [
-                'Authorization' => "Bearer {$token}",
-                'Content-Type' => 'application/json',
-            ],
-            'json' => $payload,
-        ]);
+        if (function_exists('array_is_list') && array_is_list($variables)) {
+            return ["items" => $variables];
+        }
 
-        return json_decode($response->getContent(), true);
+        return $variables;
     }
 
-    public function searchTasks(array $searchBody = []): array
+    public function searchTasks(array $body)
     {
         $token = $this->getAccessToken();
-        $url = rtrim($this->tasklistBaseUrl, '/') . '/v2/user-tasks/search';
 
-        $response = $this->client->request('POST', $url, [
-            'headers' => [
-                'Authorization' => "Bearer {$token}",
-                'Content-Type' => 'application/json',
+        // Estructura por defecto compatible con /v2/user-tasks/search
+        $defaultPayload = [
+            'filter' => [
+                'state' => 'CREATED',
             ],
-            'json' => $searchBody,
-        ]);
+            'page' => [
+                'limit' => 50,
+            ],
+        ];
 
-        return json_decode($response->getContent(), true);
+        // Permitir que el body que venga sobreescriba porciones de filter/page
+        $payload = array_replace_recursive($defaultPayload, $body ?? []);
+
+        file_put_contents(
+            __DIR__ . "/../../var/log/camunda_debug.log",
+            "Request to Camunda Tasklist:\n" . json_encode($payload, JSON_PRETTY_PRINT) . "\n\n",
+            FILE_APPEND
+        );
+
+        $resp = $this->http->request(
+            'POST',
+            "$this->tasklistUrl/v2/user-tasks/search",
+            [
+                'headers' => [
+                    'Authorization' => "Bearer $token",
+                    'Content-Type'  => 'application/json',
+                ],
+                'json' => $payload,
+            ]
+        );
+
+        return $resp->toArray(false);
     }
 
-    public function completeUserTask(string $userTaskKey, array $variables = []): array
+    public function completeUserTask(string $userTaskKey, array $payload): array
     {
-        $token = $this->getAccessToken();
-        $url = rtrim($this->tasklistBaseUrl, '/') . '/v2/user-tasks/' . rawurlencode($userTaskKey) . '/completion';
+        try {
+            $url = $this->tasklistUrl . "/v2/user-tasks/{$userTaskKey}/completion";
+            $token = $this->getAccessToken();
 
-        $response = $this->client->request('POST', $url, [
-            'headers' => [
-                'Authorization' => "Bearer {$token}",
-                'Content-Type' => 'application/json',
-            ],
-            'json' => ['variables' => (object)$variables],
-        ]);
+            $resp = $this->http->request("POST", $url, [
+                "headers" => [
+                    "Authorization" => "Bearer $token",
+                    "Content-Type" => "application/json"
+                ],
+                "json" => $payload
+            ]);
 
-        return json_decode($response->getContent(), true);
+            return [
+                "status" => $resp->getStatusCode(),
+                "data" => json_decode($resp->getContent(), true)
+            ];
+        } catch (\Throwable $e) {
+            return [
+                "status" => 500,
+                "error" => $e->getMessage()
+            ];
+        }
     }
 
-    public function cancelProcess(string $processInstanceKey): array
+    public function cancelProcess(string $processInstanceKey)
     {
         $token = $this->getAccessToken();
-        $url = rtrim($this->zeebeBaseUrl, '/') . '/v2/process-instances/' . rawurlencode($processInstanceKey) . '/cancellation';
 
-        $response = $this->client->request('POST', $url, [
-            'headers' => [
-                'Authorization' => "Bearer {$token}",
-                'Content-Type' => 'application/json',
-            ],
-            'json' => new \stdClass(),
-        ]);
+        try {
+            $resp = $this->http->request(
+                'POST',
+                $this->zeebeUrl . "/v2/process-instances/{$processInstanceKey}/cancellation",
+                [
+                    'headers' => [
+                        'Authorization' => "Bearer {$token}",
+                        'Content-Type'  => 'application/json',
+                    ],
+                    'json' => new \stdClass(), // cuerpo vacío
+                ]
+            );
 
-        return json_decode($response->getContent(), true);
+            // Aquí Camunda debe devolver 204 si todo fue bien
+            return [
+                'status'   => $resp->getStatusCode(),
+                'response' => $resp->toArray(false),
+            ];
+        } catch (\Symfony\Component\HttpClient\Exception\ClientException $e) {
+            // Propaga el status y el body de Camunda
+            $response = $e->getResponse();
+            return [
+                'status'   => $response->getStatusCode(),
+                'response' => $response->toArray(false),
+            ];
+        }
     }
 }
