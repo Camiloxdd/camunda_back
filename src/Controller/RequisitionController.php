@@ -491,9 +491,6 @@ class RequisitionController extends AbstractController
 
             $pendientesCount = (int)($pend['cnt'] ?? 0);
 
-            // ---------------------------------------------------------
-            // 🔟 Finalizar si no quedan pendientes
-            // ---------------------------------------------------------
             if ($pendientesCount === 0 && $approvedCount > 0) {
                 $this->conn->executeStatement(
                     "UPDATE requisiciones SET status = 'aprobada' WHERE id = ?",
