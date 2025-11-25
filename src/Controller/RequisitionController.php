@@ -329,7 +329,7 @@ class RequisitionController extends AbstractController
             // recalcular valor total con aprobados
             $sum = $this->conn->fetchAssociative('SELECT SUM(COALESCE(valor_estimado,0) * COALESCE(cantidad,1)) AS nuevo_total FROM requisicion_productos WHERE requisicion_id = ? AND (aprobado = \'aprobado\' OR aprobado = 1)', [$id]);
             $nuevoTotal = $sum['nuevo_total'] ?? 0;
-            $this->conn->executeStatement('UPDATE requisiciones SET valor_total = ? WHERE id = ?', [$nuevoTotal, $id]);
+            $this->conn->executeStatement('UPDATE requisiones SET valor_total = ? WHERE id = ?', [$nuevoTotal, $id]);
 
             // contar aprobados
             $cnt = $this->conn->fetchAssociative('SELECT COUNT(*) AS cnt FROM requisicion_productos WHERE requisicion_id = ? AND (aprobado = \'aprobado\' OR aprobado = 1)', [$id]);
@@ -587,6 +587,66 @@ class RequisitionController extends AbstractController
                 ['error' => 'Error al obtener requisiciones'],
                 500
             );
+        }
+    }
+
+    #[Route('/requisiciones/{id}/aprobacion-usuario', name: 'requisicion_aprobacion_usuario', methods: ['GET'])]
+    public function aprobacionUsuario(int $id, Request $request): JsonResponse
+    {
+        try {
+            $userName = $request->headers->get('X-User-Name') ?? null;
+            if (!$userName) {
+                return $this->json(['message' => 'Usuario no identificado (falta X-User-Name)'], 400);
+            }
+
+            // Obtener aprobaciones de la requisición ordenadas
+            $aprobaciones = $this->conn->fetchAllAssociative(
+                "SELECT id, nombre_aprobador, estado, orden, visible FROM requisicion_aprobaciones WHERE requisicion_id = ? ORDER BY orden ASC",
+                [$id]
+            );
+
+            if (empty($aprobaciones)) {
+                return $this->json(['message' => 'No hay aprobadores asignados'], 404);
+            }
+
+            // Buscar la aprobación del usuario actual
+            $aprobacionActual = null;
+            foreach ($aprobaciones as $a) {
+                if (strtolower($a['nombre_aprobador']) === strtolower($userName)) {
+                    $aprobacionActual = $a;
+                    break;
+                }
+            }
+
+            if (!$aprobacionActual) {
+                return $this->json(['message' => 'Usuario no es aprobador de esta requisición'], 403);
+            }
+
+            $estado = $aprobacionActual['estado'] ?? 'pendiente';
+            $orden = $aprobacionActual['orden'] ?? null;
+            $visible = $aprobacionActual['visible'] ?? 0;
+
+            // Determinar si puede aprobar
+            $puedeAprobar = false;
+            if (strtolower($estado) === 'pendiente' && ($visible == 1 || $visible === true)) {
+                $puedeAprobar = true;
+            }
+
+            // Determinar si ya aprobó
+            $yaAprobaste = strtolower($estado) === 'aprobada';
+
+            return $this->json([
+                'userName' => $userName,
+                'requisicionId' => $id,
+                'puedeAprobar' => $puedeAprobar,
+                'yaAprobaste' => $yaAprobaste,
+                'estado' => $estado,
+                'orden' => $orden,
+                'visible' => $visible,
+                'aprobadores' => $aprobaciones
+            ]);
+        } catch (\Throwable $e) {
+            return $this->json(['error' => 'Error al obtener estado de aprobación', 'detail' => $e->getMessage()], 500);
         }
     }
 }

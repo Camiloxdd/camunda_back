@@ -31,10 +31,7 @@ class UserController extends AbstractController
         try {
             $users = $this->userRepository->findAll();
 
-            if (empty($users)) {
-                return $this->json(['message' => 'No hay usuarios registrados'], Response::HTTP_NOT_FOUND);
-            }
-
+            // Siempre devolver array (vacío si no hay usuarios)
             $data = array_map(fn(User $user) => [
                 'id' => $user->getId(),
                 'nombre' => $user->getNombre(),
@@ -124,6 +121,10 @@ class UserController extends AbstractController
             if (isset($data['telefono'])) $user->setTelefono($data['telefono']);
             if (isset($data['area'])) $user->setArea($data['area']);
             if (isset($data['sede'])) $user->setSede($data['sede']);
+            // Si se envía contraseña, hashearla y actualizarla
+            if (isset($data['contraseña']) && !empty($data['contraseña'])) {
+                $user->setContraseña($this->passwordHasher->hashPassword($user, $data['contraseña']));
+            }
             if (isset($data['super_admin'])) $user->setSuperAdmin((bool)$data['super_admin']);
             if (isset($data['aprobador'])) $user->setAprobador((bool)$data['aprobador']);
             if (isset($data['solicitante'])) $user->setSolicitante((bool)$data['solicitante']);
