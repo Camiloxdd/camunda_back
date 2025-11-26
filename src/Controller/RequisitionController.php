@@ -9,6 +9,7 @@ use Symfony\Component\HttpFoundation\JsonResponse;
 use Doctrine\DBAL\Connection;
 use App\Repository\RequisicionesRepository;
 use App\Service\RequisitionService;
+use App\Service\RequisitionPdfService;
 use Psr\Log\LoggerInterface;
 use Throwable;
 
@@ -810,5 +811,24 @@ class RequisitionController extends AbstractController
         ';
         $rows = $conn->fetchAllAssociative($sql);
         return new JsonResponse($rows, 200);
+    }
+
+    #[Route('/requisiciones/{id}/pdf', name: 'requisition_pdf', methods: ['GET'])]
+    public function generatePdf(int $id, RequisitionPdfService $pdfService): \Symfony\Component\HttpFoundation\BinaryFileResponse
+    {
+        try {
+            $pdfPath = $pdfService->generatePdf($id);
+
+            $response = new \Symfony\Component\HttpFoundation\BinaryFileResponse($pdfPath);
+            $response->headers->set('Content-Type', 'application/pdf');
+            $response->headers->set('Content-Disposition', 'attachment; filename="requisicion_' . $id . '.pdf"');
+
+            // Clean up temp files after download
+            $response->deleteFileAfterSend(true);
+
+            return $response;
+        } catch (\Throwable $e) {
+            return $this->json(['error' => 'Error al generar PDF', 'detail' => $e->getMessage()], 500);
+        }
     }
 }
