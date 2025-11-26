@@ -6,9 +6,20 @@ use Symfony\Bundle\FrameworkBundle\Controller\AbstractController;
 use Symfony\Component\Routing\Annotation\Route;
 use Symfony\Component\HttpFoundation\Request;
 use Symfony\Component\HttpFoundation\JsonResponse;
+use Symfony\Component\HttpFoundation\Response;
+use Symfony\Component\HttpFoundation\StreamedResponse;
+use Symfony\Component\HttpFoundation\File\Exception\FileException;
+use Symfony\Component\Filesystem\Filesystem;
+use Symfony\Component\Filesystem\Exception\IOExceptionInterface;
+use Symfony\Component\Mime\Email;
 use Doctrine\DBAL\Connection;
+use Symfony\Component\HttpFoundation\BinaryFileResponse;
+use Symfony\Component\HttpFoundation\ResponseHeaderBag;
 use App\Repository\RequisicionesRepository;
 use App\Service\RequisitionService;
+use PhpOffice\PhpSpreadsheet\Reader\Xlsx;
+use ConvertApi\ConvertApi;
+
 use App\Service\RequisitionPdfService;
 use Psr\Log\LoggerInterface;
 use Throwable;
@@ -667,7 +678,7 @@ class RequisitionController extends AbstractController
 
             $this->conn->executeStatement("UPDATE requisicion_productos SET aprobado = 'aprobado' WHERE requisicion_id = ?", [$id]);
             $this->conn->executeStatement("UPDATE requisicion_aprobaciones SET estado = 'aprobada', visible = 0 WHERE requisicion_id = ?", [$id]);
-            $this->conn->executeStatement("UPDATE requisiciones SET status = 'Totalmente Aprobada' WHERE id = ?", [$id]);
+            $this->conn->executeStatement("UPDATE requisiones SET status = 'Totalmente Aprobada' WHERE id = ?", [$id]);
 
             $sum = $this->conn->fetchAssociative("SELECT SUM(COALESCE(valor_estimado,0) * COALESCE(cantidad,1)) AS total FROM requisicion_productos WHERE requisicion_id = ? AND aprobado = 'aprobado'", [$id]);
             $nuevoTotal = $sum['total'] ?? 0;
@@ -813,22 +824,111 @@ class RequisitionController extends AbstractController
         return new JsonResponse($rows, 200);
     }
 
+
     #[Route('/requisiciones/{id}/pdf', name: 'requisition_pdf', methods: ['GET'])]
-    public function generatePdf(int $id, RequisitionPdfService $pdfService): \Symfony\Component\HttpFoundation\BinaryFileResponse
+    public function downloadPdf(int $id, Connection $conn): BinaryFileResponse
     {
-        try {
-            $pdfPath = $pdfService->generatePdf($id);
+        $projectDir = $this->getParameter('kernel.project_dir');
 
-            $response = new \Symfony\Component\HttpFoundation\BinaryFileResponse($pdfPath);
-            $response->headers->set('Content-Type', 'application/pdf');
-            $response->headers->set('Content-Disposition', 'attachment; filename="requisicion_' . $id . '.pdf"');
+        // ⚠️ Asegúrate que esta ruta existe
+        $plantilla = $projectDir . "/templates/plantilla.xlsx";
 
-            // Clean up temp files after download
-            $response->deleteFileAfterSend(true);
+        // Archivos temporales
+        $tempExcel = sys_get_temp_dir() . "/requisicion_{$id}.xlsx";
+        $tempPdf   = sys_get_temp_dir() . "/requisicion_{$id}.pdf";
 
-            return $response;
-        } catch (\Throwable $e) {
-            return $this->json(['error' => 'Error al generar PDF', 'detail' => $e->getMessage()], 500);
+        // 1) Requisición
+        $requisicion = $conn->fetchAssociative(
+            "SELECT * FROM requisiciones WHERE id = ?",
+            [$id]
+        );
+        if (!$requisicion) {
+            throw $this->createNotFoundException("Requisición no encontrada");
         }
+
+        // 2) Productos
+        $productos = $conn->fetchAllAssociative(
+            "SELECT * FROM requisicion_productos WHERE requisicion_id = ?",
+            [$id]
+        );
+
+        // 3) Cargar plantilla Excel
+        $reader = new Xlsx();
+        $reader->setReadDataOnly(false);
+        $spreadsheet = $reader->load($plantilla);
+
+        // ⚠️ Si la hoja no existe marcaba el error setCellValue null
+        $sheet = $spreadsheet->getSheetByName("F-SGA-SG-19");
+        if ($sheet === null) {
+            throw new \Exception("❌ La hoja 'F-SGA-SG-19' no existe en la plantilla.");
+        }
+
+        // 4) Cabecera
+        $sheet->setCellValue("E7", $requisicion["nombre_solicitante"] ?? "N/A");
+        $sheet->setCellValue("E8", $requisicion["fecha"] ?? "N/A");
+        $sheet->setCellValue("E9", $requisicion["fecha_requerido_entrega"] ?? "N/A");
+        $sheet->setCellValue("E10", $requisicion["justificacion"] ?? "N/A");
+        $sheet->setCellValue("O7", $requisicion["area"] ?? "N/A");
+        $sheet->setCellValue("O8", $requisicion["sede"] ?? "N/A");
+        $sheet->setCellValue("K9", $requisicion["urgencia"] ?? "N/A");
+        $sheet->setCellValue("T10", ($requisicion["presupuestada"] ? "Sí" : "No"));
+        $sheet->setCellValue("T9", $requisicion["tiempoAproximadoGestion"] ?? "N/A");
+
+        // 5) Productos
+        $start = 14;
+        foreach ($productos as $i => $p) {
+            $r = $start + $i;
+
+            $sheet->setCellValue("B$r", $i + 1);
+            $sheet->setCellValue("C$r", $p["nombre"]);
+            $sheet->setCellValue("F$r", (int)$p["cantidad"]);
+            $sheet->setCellValue("G$r", $p["centro_costo"]);
+            $sheet->setCellValue("H$r", $p["cuenta_contable"]);
+            $sheet->setCellValue("L$r", preg_replace('/[^\d.-]/', '', $p["valor_estimado"]));
+            $sheet->setCellValue("J$r", $requisicion["presupuestada"] ? "Sí" : "No");
+            $sheet->setCellValue("M$r", $p["descripcion"]);
+            $sheet->setCellValue("N$r", $p["compra_tecnologica"] ? "Sí Aplica" : "No Aplica");
+            $sheet->setCellValue("R$r", $p["ergonomico"] ? "Sí Aplica" : "No Aplica");
+        }
+
+        // 6) Guardar Excel temporal
+        \PhpOffice\PhpSpreadsheet\IOFactory::createWriter($spreadsheet, "Xlsx")
+            ->save($tempExcel);
+
+        // 7) Convertir con ConvertAPI oficial
+        $this->convertUsingConvertAPI($tempExcel, $tempPdf);
+
+        // 8) Descargar
+        $response = new BinaryFileResponse($tempPdf);
+        $response->setContentDisposition(
+            ResponseHeaderBag::DISPOSITION_ATTACHMENT,
+            "requisicion_{$id}.pdf"
+        );
+
+        return $response;
+    }
+
+
+    private function convertUsingConvertAPI(string $xlsx, string $pdf): void
+    {
+        require_once __DIR__ . '/../../vendor/autoload.php';
+
+        $secret = $_ENV['CONVERT_API_SECRET'] ?? '';
+        if (!$secret) {
+            throw new \Exception("CONVERT_API_SECRET no configurado");
+        }
+
+        // Configurar SDK
+        ConvertApi::setApiCredentials($secret);
+
+        // Convertir archivo
+        $result = ConvertApi::convert('pdf', [
+            'File' => $xlsx,
+            'PageOrientation' => 'landscape',
+            'AutoConvert' => 'true',
+        ], 'xlsx');
+
+        // Guardar PDF
+        $result->getFile()->save($pdf);
     }
 }

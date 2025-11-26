@@ -4,7 +4,12 @@ namespace App\Service;
 
 use Doctrine\DBAL\Connection;
 use PhpOffice\PhpSpreadsheet\IOFactory;
+use PhpOffice\PhpSpreadsheet\Reader\Xlsx;
+use PhpOffice\PhpSpreadsheet\Writer\Pdf\Mpdf;
+use PhpOffice\PhpSpreadsheet\Cell\DataType;
+use PhpOffice\PhpSpreadsheet\Worksheet\PageSetup;
 use Psr\Log\LoggerInterface;
+use ConvertApi\ConvertApi;
 
 class RequisitionPdfService
 {
@@ -18,59 +23,74 @@ class RequisitionPdfService
         $this->conn = $connection;
         $this->logger = $logger;
         $this->tempDir = $projectDir . '/var/temp';
-        $this->templatePath = $projectDir . '/templates/plantilla.xlsx';
+        $this->templatePath = $projectDir . '/templates/plantillaa.xlsx';
 
         if (!is_dir($this->tempDir)) {
             mkdir($this->tempDir, 0755, true);
         }
+
+        // Set API Key
+        ConvertApi::setApiCredentials($_ENV['CONVERT_API_SECRET'] ?? '');
     }
 
-    public function generatePdf(int $id): string
+        public function generatePdf(int $id): string
     {
         try {
-            // 1️⃣ Fetch requisición
+
+            // 1) Traer datos
             $requisicion = $this->conn->fetchAssociative(
                 'SELECT * FROM requisiciones WHERE id = ?',
                 [$id]
             );
-
             if (!$requisicion) {
                 throw new \Exception('Requisición no encontrada');
             }
 
-            // 2️⃣ Fetch productos
             $productos = $this->conn->fetchAllAssociative(
                 'SELECT * FROM requisicion_productos WHERE requisicion_id = ?',
                 [$id]
             );
 
-            $this->logger->info("📦 Productos encontrados: " . count($productos));
+            // 2) Cargar plantilla Excel
+            $reader = new Xlsx();
+            $reader->setReadDataOnly(false);
+            $spreadsheet = $reader->load($this->templatePath);
 
-            // 3️⃣ Load Excel template
-            $spreadsheet = IOFactory::load($this->templatePath);
+            // 3) Obtener hoja correctamente (FIX del null)
             $worksheet = $spreadsheet->getSheetByName('F-SGA-SG-19');
+            if (!$worksheet) {
+                $worksheet = $spreadsheet->getActiveSheet();
+                $this->logger->warning("La hoja 'F-SGA-SG-19' no existe. Se usa la hoja activa.");
+            }
 
-            // 4️⃣ Fill header (cabecera general)
+            // 4) Llenar datos
             $this->fillHeader($worksheet, $requisicion);
-
-            // 5️⃣ Fill products
             $this->fillProducts($worksheet, $productos, $requisicion);
-
-            // 6️⃣ Fill approvers
             $this->fillApprovers($worksheet, $requisicion, $productos);
 
-            // 7️⃣ Save Excel temp file
-            $excelTemp = $this->tempDir . '/requisicion_' . $id . '.xlsx';
-            $writer = IOFactory::createWriter($spreadsheet, 'Xlsx');
-            $writer->save($excelTemp);
+            // 5) Guardar XLSX temporal
+            $tempExcel = tempnam(sys_get_temp_dir(), 'req_') . '.xlsx';
+            IOFactory::createWriter($spreadsheet, 'Xlsx')->save($tempExcel);
 
-            $this->logger->info("✅ Excel guardado en: " . $excelTemp);
+            $this->logger->info("Excel generado: $tempExcel");
 
-            // 8️⃣ Convert Excel to PDF using LibreOffice (mejor que mPDF para Excel)
-            $pdfTemp = $this->tempDir . '/requisicion_' . $id . '.pdf';
-            $this->convertExcelToPdfWithLibreOffice($excelTemp, $pdfTemp);
+            // 6) ConvertAPI – método oficial correcto
+            ConvertApi::setApiCredentials($_ENV['CONVERT_API_SECRET'] ?? '');
 
-            return $pdfTemp;
+            $result = ConvertApi::convert('pdf', [
+                'File' => $tempExcel,
+                'PageOrientation' => 'landscape',
+                'AutoFit' => 'true'
+            ], 'xlsx');
+
+            // 7) Guardar PDF final
+            $tempPdf = tempnam(sys_get_temp_dir(), 'req_pdf_') . '.pdf';
+            $result->getFile()->save($tempPdf);
+
+            $this->logger->info("PDF generado: $tempPdf");
+
+            return $tempPdf;
+
         } catch (\Throwable $e) {
             $this->logger->error('Error generating PDF: ' . $e->getMessage());
             throw $e;
@@ -95,16 +115,21 @@ class RequisitionPdfService
         $startRow = 14;
         foreach ($productos as $idx => $item) {
             $row = $startRow + $idx;
-            $worksheet->getCell('B' . $row)->setValue($idx + 1);
-            $worksheet->getCell('C' . $row)->setValue($item['nombre'] ?? 'N/A');
-            $worksheet->getCell('F' . $row)->setValue((int)($item['cantidad'] ?? 0));
-            $worksheet->getCell('G' . $row)->setValue($item['centro_costo'] ?? 'N/A');
-            $worksheet->getCell('H' . $row)->setValue($item['cuenta_contable'] ?? 'N/A');
-            $worksheet->getCell('L' . $row)->setValue($this->parseCurrency($item['valor_estimado'] ?? 0));
-            $worksheet->getCell('J' . $row)->setValue($requisicion['presupuestada'] ? 'Sí' : 'No');
-            $worksheet->getCell('M' . $row)->setValue($item['descripcion'] ?? 'N/A');
-            $worksheet->getCell('N' . $row)->setValue($item['compra_tecnologica'] ? 'Sí Aplica' : 'No Aplica');
-            $worksheet->getCell('R' . $row)->setValue($item['ergonomico'] ? 'Sí Aplica' : 'No Aplica');
+
+            $worksheet->getCell("B$row")->setValueExplicit($idx + 1, DataType::TYPE_NUMERIC);
+            $worksheet->getCell("C$row")->setValue($item['nombre'] ?? 'N/A');
+            $worksheet->getCell("F$row")->setValueExplicit((int)($item['cantidad']), DataType::TYPE_NUMERIC);
+            $worksheet->getCell("G$row")->setValue($item['centro_costo'] ?? 'N/A');
+            $worksheet->getCell("H$row")->setValue($item['cuenta_contable'] ?? 'N/A');
+
+            $valor = $this->parseCurrency($item['valor_estimado'] ?? 0);
+            $worksheet->getCell("L$row")->setValueExplicit($valor, DataType::TYPE_NUMERIC);
+            $worksheet->getStyle("L$row")->getNumberFormat()->setFormatCode('#,##0');
+
+            $worksheet->getCell("J$row")->setValue($requisicion['presupuestada'] ? 'Sí' : 'No');
+            $worksheet->getCell("M$row")->setValue($item['descripcion'] ?? 'N/A');
+            $worksheet->getCell("N$row")->setValue(!empty($item['compra_tecnologica']) ? 'Sí Aplica' : 'No Aplica');
+            $worksheet->getCell("R$row")->setValue(!empty($item['ergonomico']) ? 'Sí Aplica' : 'No Aplica');
         }
     }
 
@@ -208,30 +233,6 @@ class RequisitionPdfService
         }
     }
 
-    private function convertExcelToPdfWithLibreOffice(string $excelPath, string $pdfPath): void
-    {
-        // Usar LibreOffice para convertir Excel a PDF (mejor calidad)
-        $command = sprintf(
-            'libreoffice --headless --convert-to pdf --outdir %s %s',
-            escapeshellarg(dirname($pdfPath)),
-            escapeshellarg($excelPath)
-        );
-
-        $this->logger->info("Ejecutando comando: " . $command);
-        exec($command, $output, $returnCode);
-
-        if ($returnCode !== 0) {
-            $this->logger->error("LibreOffice error: " . implode("\n", $output));
-            throw new \Exception('Error converting Excel to PDF with LibreOffice. Code: ' . $returnCode);
-        }
-
-        if (!file_exists($pdfPath)) {
-            throw new \Exception('PDF file was not created. Check LibreOffice installation.');
-        }
-
-        $this->logger->info("✅ PDF creado correctamente en: " . $pdfPath);
-    }
-
     private function parseCurrency($value): float
     {
         if ($value === null || $value === '') {
@@ -249,5 +250,93 @@ class RequisitionPdfService
             }
         }
         return false;
+    }
+
+    /**
+     * Envia el XLSX a un servicio externo de conversión (CONVERT_API_URL) y guarda el PDF resultante.
+     * Espera que la API responda con application/pdf en el body.
+     */
+    private function convertExcelToPdfUsingConvertAPI(string $excelPath, string $pdfPath): void
+    {
+        $convertUrl = getenv('CONVERT_API_URL') ?: ($_SERVER['CONVERT_API_URL'] ?? null);
+        if (!$convertUrl) {
+            throw new \RuntimeException('CONVERT_API_URL no configurado en el entorno');
+        }
+
+        if (!file_exists($excelPath)) {
+            throw new \RuntimeException('Excel file not found: ' . $excelPath);
+        }
+
+        $this->logger->info("Enviando {$excelPath} a Convert API: {$convertUrl}");
+
+        $ch = curl_init();
+        $cfile = curl_file_create($excelPath, 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet', basename($excelPath));
+        $post = [
+            'file' => $cfile,
+            // puedes añadir parámetros adicionales que la API requiera, p.e. formato=pdf
+            'format' => 'pdf'
+        ];
+
+        curl_setopt_array($ch, [
+            CURLOPT_URL => $convertUrl,
+            CURLOPT_POST => true,
+            CURLOPT_RETURNTRANSFER => true,
+            CURLOPT_POSTFIELDS => $post,
+            CURLOPT_TIMEOUT => 120,
+            CURLOPT_FAILONERROR => false,
+        ]);
+
+        $response = curl_exec($ch);
+        $httpCode = curl_getinfo($ch, CURLINFO_HTTP_CODE);
+        $contentType = curl_getinfo($ch, CURLINFO_CONTENT_TYPE);
+        $curlErr = curl_error($ch);
+        curl_close($ch);
+
+        if ($response === false) {
+            throw new \RuntimeException('Error calling Convert API: ' . $curlErr);
+        }
+
+        if ($httpCode < 200 || $httpCode >= 300) {
+            throw new \RuntimeException("Convert API returned HTTP {$httpCode}. Body: " . substr($response, 0, 1000));
+        }
+
+        // Aceptar application/pdf o octet-stream
+        if (strpos(strtolower($contentType ?? ''), 'pdf') === false && strpos(strtolower($contentType ?? ''), 'application/octet-stream') === false) {
+            // si la API devolviera JSON con error, intentar parsearlo para mensaje útil
+            $maybeJson = json_decode($response, true);
+            if (json_last_error() === JSON_ERROR_NONE && isset($maybeJson['error'])) {
+                throw new \RuntimeException('Convert API error: ' . $maybeJson['error']);
+            }
+            // si no es pdf, fallamos
+            throw new \RuntimeException('Convert API did not return a PDF. Content-Type: ' . ($contentType ?? 'unknown'));
+        }
+
+        // Guardar response raw en archivo pdf
+        $written = file_put_contents($pdfPath, $response);
+        if ($written === false) {
+            throw new \RuntimeException('No se pudo escribir el PDF en: ' . $pdfPath);
+        }
+
+        $this->logger->info("PDF guardado desde Convert API en: {$pdfPath}");
+    }
+
+    private function fixPrintSettings($worksheet): void
+    {
+        // orientación horizontal
+        $worksheet->getPageSetup()->setOrientation(PageSetup::ORIENTATION_LANDSCAPE);
+
+        // ajustar a 1 página de ancho
+        $worksheet->getPageSetup()->setFitToWidth(1);
+        $worksheet->getPageSetup()->setFitToHeight(0);
+
+        // área real
+        $worksheet->getPageSetup()->setPrintArea('A1:W56');
+
+        // eliminar basura fuera del rango
+        $worksheet->removeColumn('X', 50);
+        $worksheet->removeRow(57, 500);
+
+        // limpiar estilos fantasma
+        $worksheet->garbageCollect();
     }
 }
