@@ -132,6 +132,15 @@ class CamundaService
             $url = $this->tasklistUrl . "/v2/user-tasks/{$userTaskKey}/completion";
             $token = $this->getAccessToken();
 
+            // Asegura que siempre haya 'variables' como objeto
+            if (!isset($payload['variables']) || !is_array($payload['variables'])) {
+                $payload['variables'] = new \stdClass();
+            }
+
+            if (!isset($payload['action'])) {
+                $payload['action'] = 'complete';
+            }
+
             $resp = $this->http->request("POST", $url, [
                 "headers" => [
                     "Authorization" => "Bearer $token",
