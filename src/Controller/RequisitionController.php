@@ -271,7 +271,13 @@ class RequisitionController extends AbstractController
             $req = $this->conn->fetchAssociative('SELECT id, nombre_solicitante, fecha, justificacion, area, sede, urgencia, presupuestada, valor_total, status FROM requisiciones WHERE id = ?', [$id]);
             if (!$req) return $this->json(['message' => 'Requisición no encontrada'], 404);
 
-            $productos = $this->conn->fetchAllAssociative('SELECT id, nombre, descripcion, cantidad, valor_estimado, compra_tecnologica, ergonomico, aprobado, centro_costo, cuenta_contable FROM requisicion_productos WHERE requisicion_id = ?', [$id]);
+            // 🔥 OBTENER TODOS LOS PRODUCTOS (para referencia/histórico)
+            $todosLosProductos = $this->conn->fetchAllAssociative('SELECT id, nombre, descripcion, cantidad, valor_estimado, compra_tecnologica, ergonomico, aprobado, centro_costo, cuenta_contable FROM requisicion_productos WHERE requisicion_id = ?', [$id]);
+
+            // 🔥 FILTRAR SOLO PRODUCTOS NO RECHAZADOS (los que se muestran en la UI)
+            $productosVisibles = array_filter($todosLosProductos, function($p) {
+                return $p['aprobado'] !== 'rechazado';
+            });
 
             // currentUser: si Symfony maneja auth, reemplazar por getUser()
             $userId = $request->headers->get('X-User-Id') ?? null;
@@ -282,7 +288,7 @@ class RequisitionController extends AbstractController
 
             return $this->json([
                 'requisicion' => $req,
-                'productos' => $productos,
+                'productos' => array_values($productosVisibles), // 🔥 SIN rechazados
                 'currentUser' => $currentUser,
                 'approvalProgress' => [
                     'approvers' => $approvers
@@ -420,7 +426,6 @@ class RequisitionController extends AbstractController
                     [$id]
                 );
             }
-            // Si es gerAdmin o gerGeneral, productosRelevantes permanece vacío (no tienen productos específicos)
 
             // 3️⃣ VALIDAR QUE LAS DECISIONES SEAN SOLO DE PRODUCTOS RELEVANTES
             $idsRelevantes = array_map(fn($p) => $p['id'], $productosRelevantes);
@@ -454,23 +459,85 @@ class RequisitionController extends AbstractController
                 );
             }
 
-            // 5️⃣ MARCAR APROBADOR ACTUAL COMO APROBADA (ya completó su rol)
-            $this->conn->executeStatement(
-                "UPDATE requisicion_aprobaciones SET estado = 'aprobada', fecha_aprobacion = NOW() WHERE id = ?",
-                [$aprobadorActual['id']]
+            // 5️⃣ VERIFICAR SI TODOS LOS PRODUCTOS RELEVANTES FUERON DECIDIDOS
+            $countRelevantes = $this->conn->fetchAssociative(
+                "SELECT COUNT(*) as total FROM requisicion_productos WHERE requisicion_id = ? AND 
+                 ((compra_tecnologica = 1 AND ? IN (?, ?)) OR (ergonomico = 1 AND ? IN (?, ?)))",
+                [$id, $rolAprobador, 'dicTYP', 'gerTyC', $rolAprobador, 'dicSST', 'gerSST']
             );
+            $totalRelevantes = (int)($countRelevantes['total'] ?? 0);
 
-            // 6️⃣ DESBLOQUEAR SIGUIENTE APROBADOR (SIN ESPERAR A OTROS)
-            $this->conn->executeStatement(
-                "UPDATE requisicion_aprobaciones SET visible = 1 WHERE requisicion_id = ? AND orden = ? AND estado = 'pendiente'",
-                [$id, $ordenActual + 1]
+            $countDecididos = $this->conn->fetchAssociative(
+                "SELECT COUNT(*) as total FROM requisicion_productos 
+                 WHERE requisicion_id = ? AND (aprobado = 'aprobado' OR aprobado = 'rechazado') AND
+                 ((compra_tecnologica = 1 AND ? IN (?, ?)) OR (ergonomico = 1 AND ? IN (?, ?)))",
+                [$id, $rolAprobador, 'dicTYP', 'gerTyC', $rolAprobador, 'dicSST', 'gerSST']
             );
+            $totalDecididos = (int)($countDecididos['total'] ?? 0);
 
-            // 7️⃣ CALCULAR NUEVO TOTAL SOLO DE PRODUCTOS APROBADOS
+            // 🔥 CONTAR CUÁNTOS RECHAZADOS HAY DE SUS PRODUCTOS RELEVANTES
+            $countRechazadosDelRol = $this->conn->fetchAssociative(
+                "SELECT COUNT(*) as total FROM requisicion_productos 
+                 WHERE requisicion_id = ? AND aprobado = 'rechazado' AND
+                 ((compra_tecnologica = 1 AND ? IN (?, ?)) OR (ergonomico = 1 AND ? IN (?, ?)))",
+                [$id, $rolAprobador, 'dicTYP', 'gerTyC', $rolAprobador, 'dicSST', 'gerSST']
+            );
+            $rechazadosDelRol = (int)($countRechazadosDelRol['total'] ?? 0);
+
+            $this->logger->info("Rol: $rolAprobador | Relevantes: $totalRelevantes | Decididos: $totalDecididos | Rechazados: $rechazadosDelRol");
+
+            // Solo marcar aprobador como "aprobada" si TODOS SUS PRODUCTOS RELEVANTES tienen decisión
+            if ($totalRelevantes > 0 && $totalDecididos === $totalRelevantes) {
+                // 6️⃣ MARCAR APROBADOR ACTUAL COMO APROBADA O RECHAZADA
+                if ($rechazadosDelRol === $totalRelevantes) {
+                    // RECHAZÓ TODOS sus productos relevantes
+                    $this->conn->executeStatement(
+                        "UPDATE requisicion_aprobaciones SET estado = 'rechazada', fecha_aprobacion = NOW() WHERE id = ?",
+                        [$aprobadorActual['id']]
+                    );
+                    $this->logger->info("Aprobador $userName rechazó TODOS sus productos. Estado = rechazada.");
+                } else {
+                    // APROBÓ (al menos algunos o todos)
+                    $this->conn->executeStatement(
+                        "UPDATE requisicion_aprobaciones SET estado = 'aprobada', fecha_aprobacion = NOW() WHERE id = ?",
+                        [$aprobadorActual['id']]
+                    );
+                    $this->logger->info("Aprobador $userName completó su aprobación. Estado = aprobada.");
+                }
+
+                // 7️⃣ 🔥 SI RECHAZÓ TODOS SUS PRODUCTOS, MARCAR SIGUIENTE COMO RECHAZADA TAMBIÉN
+                if ($rechazadosDelRol === $totalRelevantes && $totalRelevantes > 0) {
+                    $this->logger->info("Aprobador $userName rechazó TODOS sus productos. Marcando siguiente como rechazada.");
+                    
+                    // Marcar siguiente aprobador como rechazada (con fecha actual)
+                    $this->conn->executeStatement(
+                        "UPDATE requisicion_aprobaciones SET estado = 'rechazada', visible = 0, fecha_aprobacion = NOW() WHERE requisicion_id = ? AND orden = ? AND estado = 'pendiente'",
+                        [$id, $ordenActual + 1]
+                    );
+
+                    // Desbloquear el que viene después (orden + 2)
+                    $this->conn->executeStatement(
+                        "UPDATE requisicion_aprobaciones SET visible = 1 WHERE requisicion_id = ? AND orden = ? AND estado = 'pendiente'",
+                        [$id, $ordenActual + 2]
+                    );
+                } else {
+                    // Si aprobó o rechazó solo algunos: desbloquear siguiente normalmente
+                    $this->conn->executeStatement(
+                        "UPDATE requisicion_aprobaciones SET visible = 1 WHERE requisicion_id = ? AND orden = ? AND estado = 'pendiente'",
+                        [$id, $ordenActual + 1]
+                    );
+                }
+
+                $this->logger->info("Aprobador $userName completado. Siguiente visible: " . ($ordenActual + ($rechazadosDelRol === $totalRelevantes && $totalRelevantes > 0 ? 2 : 1)));
+            } else {
+                $this->logger->info("Aprobador $userName aún tiene productos pendientes: Decididos=$totalDecididos de $totalRelevantes");
+            }
+
+            // 8️⃣ CALCULAR NUEVO TOTAL SOLO DE PRODUCTOS APROBADOS
             $sum = $this->conn->fetchAssociative(
                 "SELECT SUM(COALESCE(valor_estimado, 0) * COALESCE(cantidad, 1)) AS nuevo_total
-                FROM requisicion_productos
-                WHERE requisicion_id = ? AND (aprobado = 'aprobado' OR aprobado = 1)",
+            FROM requisicion_productos
+            WHERE requisicion_id = ? AND (aprobado = 'aprobado' OR aprobado = 1)",
                 [$id]
             );
             $nuevoTotal = $sum['nuevo_total'] ?? 0;
@@ -480,7 +547,7 @@ class RequisitionController extends AbstractController
                 [$nuevoTotal, $id]
             );
 
-            // 8️⃣ CONTAR ESTADOS FINALES
+            // 9️⃣ CONTAR ESTADOS FINALES
             $countAll = $this->conn->fetchAssociative(
                 "SELECT COUNT(*) AS total FROM requisicion_productos WHERE requisicion_id = ?",
                 [$id]
@@ -505,7 +572,7 @@ class RequisitionController extends AbstractController
             );
             $pendingProductsCount = (int)($countPendientes['cnt'] ?? 0);
 
-            // 9️⃣ DETERMINAR ESTADO FINAL DE LA REQUISICIÓN
+            // 🔟 DETERMINAR ESTADO FINAL DE LA REQUISICIÓN
             $finalStatus = 'pendiente';
 
             if ($totalProductos > 0) {
@@ -533,7 +600,7 @@ class RequisitionController extends AbstractController
                 [$finalStatus, $id]
             );
 
-            // 🔟 VERIFICAR SI QUEDAN APROBADORES PENDIENTES
+            // 1️⃣1️⃣ VERIFICAR SI QUEDAN APROBADORES PENDIENTES
             $countPendingApprovers = $this->conn->fetchAssociative(
                 "SELECT COUNT(*) AS cnt FROM requisicion_aprobaciones WHERE requisicion_id = ? AND estado = 'pendiente'",
                 [$id]
@@ -711,11 +778,11 @@ class RequisitionController extends AbstractController
 
             $this->conn->executeStatement("UPDATE requisicion_productos SET aprobado = 'aprobado' WHERE requisicion_id = ?", [$id]);
             $this->conn->executeStatement("UPDATE requisicion_aprobaciones SET estado = 'aprobada', visible = 0 WHERE requisicion_id = ?", [$id]);
-            $this->conn->executeStatement("UPDATE requisiones SET status = 'Totalmente Aprobada' WHERE id = ?", [$id]);
+            $this->conn->executeStatement("UPDATE requisiciones SET status = 'Totalmente Aprobada' WHERE id = ?", [$id]);
 
             $sum = $this->conn->fetchAssociative("SELECT SUM(COALESCE(valor_estimado,0) * COALESCE(cantidad,1)) AS total FROM requisicion_productos WHERE requisicion_id = ? AND aprobado = 'aprobado'", [$id]);
             $nuevoTotal = $sum['total'] ?? 0;
-            $this->conn->executeStatement("UPDATE requisiones SET valor_total = ? WHERE id = ?", [$nuevoTotal, $id]);
+            $this->conn->executeStatement("UPDATE requisiciones SET valor_total = ? WHERE id = ?", [$nuevoTotal, $id]);
 
             return $this->json(['message' => 'Requisición marcada como aprobada (total)', 'requisicionId' => $id]);
         } catch (Throwable $e) {
@@ -934,11 +1001,94 @@ class RequisitionController extends AbstractController
                 $sheet->setCellValue("F$r", (int)$p["cantidad"]);
                 $sheet->setCellValue("G$r", $p["centro_costo"]);
                 $sheet->setCellValue("H$r", $p["cuenta_contable"]);
-                $sheet->setCellValue("L$r", preg_replace('/[^\d.-]/', '', $p["valor_estimado"]));
+                // 🔥 FIX: Asegurar que el valor sea numérico y establecer ancho de columna
+                $valorEstimado = (float)preg_replace('/[^\d.-]/', '', $p["valor_estimado"] ?? 0);
+                $sheet->setCellValue("L$r", $valorEstimado);
+                $sheet->getColumnDimension('L')->setWidth(25); // Ancho suficiente para números
                 $sheet->setCellValue("J$r", $requisicion["presupuestada"] ? "Sí" : "No");
                 $sheet->setCellValue("M$r", $p["descripcion"]);
                 $sheet->setCellValue("N$r", $p["compra_tecnologica"] ? "Sí Aplica" : "No Aplica");
                 $sheet->setCellValue("R$r", $p["ergonomico"] ? "Sí Aplica" : "No Aplica");
+            }
+
+            // 🔥 NUEVA LÓGICA DE FIRMAS - SIMPLIFICADA (Leer de BD)
+            try {
+                // 1️⃣ Obtener aprobadores desde requisicion_aprobaciones en orden
+                $aprobadores = $conn->fetchAllAssociative(
+                    "SELECT nombre_aprobador, rol_aprobador, orden 
+                     FROM requisicion_aprobaciones 
+                     WHERE requisicion_id = ? 
+                     ORDER BY orden ASC",
+                    [$id]
+                );
+
+                // 2️⃣ Limpiar celdas de nombres y firmas
+                $nameCells = ["D31", "I31", "M31", "O31", "S31"];
+                $sigCells = ["D32", "I32", "M32", "O32", "S32"];
+                foreach (array_merge($nameCells, $sigCells) as $cell) {
+                    $sheet->setCellValue($cell, "");
+                }
+
+                // 3️⃣ Escribir solicitante (siempre en D28)
+                $sheet->setCellValue("D31", $requisicion["nombre_solicitante"] ?? "N/A");
+
+                // 4️⃣ Asignar aprobadores a las 4 columnas (I, M, O, S) según orden de BD
+                $approvalCells = ["I31", "M31", "O31", "S31"];
+                foreach ($aprobadores as $idx => $aprobador) {
+                    if ($idx < count($approvalCells)) {
+                        $sheet->setCellValue($approvalCells[$idx], $aprobador["nombre_aprobador"] ?? "N/A");
+                    }
+                }
+
+                // 5️⃣ Firmas vacías (permanecer vacías para ser llenadas manualmente)
+                foreach ($sigCells as $cell) {
+                    $sheet->setCellValue($cell, "");
+                }
+
+                // 6️⃣ Validar Gerencia Administrativa y General según monto (si no están en aprobadores)
+                $SMLV_local = 1300000;
+                $limite_local = $SMLV_local * 10;
+                $valorTotalNum = (float)($requisicion["valor_total"] ?? 0);
+
+                $rolesEnAprobadores = array_map(fn($a) => $a["rol_aprobador"], $aprobadores);
+                $hasGerAdmin = in_array("gerAdmin", $rolesEnAprobadores, true);
+                $hasGerGeneral = in_array("gerGeneral", $rolesEnAprobadores, true);
+
+                if (!$requisicion["presupuestada"] && $valorTotalNum >= $limite_local) {
+                    $rolesNeeded = [];
+                    if (!$hasGerAdmin) $rolesNeeded[] = "gerAdmin";
+                    if (!$hasGerGeneral) $rolesNeeded[] = "gerGeneral";
+
+                    if (!empty($rolesNeeded)) {
+                        $placeholders = implode(',', array_fill(0, count($rolesNeeded), '?'));
+                        $admins = $conn->fetchAllAssociative(
+                            "SELECT nombre, cargo FROM user WHERE cargo IN ($placeholders)",
+                            $rolesNeeded
+                        );
+
+                        $currentD39 = (string)($sheet->getCell('D36')->getValue() ?? "");
+                        $currentM39 = (string)($sheet->getCell('M36')->getValue() ?? "");
+
+                        if (!$currentD39 || $currentD39 === "N/A") {
+                            $gerAdmin = array_filter($admins, fn($u) => $u["cargo"] === "gerAdmin");
+                            $sheet->setCellValue("D36", !empty($gerAdmin) ? reset($gerAdmin)["nombre"] : "N/A");
+                        }
+                        if (!$currentM39 || $currentM39 === "N/A") {
+                            $gerGeneral = array_filter($admins, fn($u) => $u["cargo"] === "gerGeneral");
+                            $sheet->setCellValue("M36", !empty($gerGeneral) ? reset($gerGeneral)["nombre"] : "N/A");
+                        }
+                    }
+                } else {
+                    if (!trim($sheet->getCell('D36')->getValue() ?? "")) {
+                        $sheet->setCellValue("D36", "");
+                    }
+                    if (!trim($sheet->getCell('M36')->getValue() ?? "")) {
+                        $sheet->setCellValue("M36", "");
+                    }
+                }
+
+            } catch (\Throwable $e) {
+                $this->logger->warning("⚠️ Error al obtener/aplicar aprobaciones: " . $e->getMessage());
             }
 
             // 6) Guardar Excel temporal
