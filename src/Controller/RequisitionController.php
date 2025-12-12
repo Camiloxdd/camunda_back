@@ -875,15 +875,14 @@ class RequisitionController extends AbstractController
     public function listProductos(Connection $conn): JsonResponse
     {
         $sql = '
-            SELECT
-            id,
-            nombre,
-            descripcion,
-            cuenta_contable,
-            centro_costo,
-            es_tecnologico,
-            CASE WHEN es_tecnologico = 1 THEN 0 ELSE 1 END AS ergonomico
-            FROM productos
+            SELECT 
+                grupo,
+                nombre,
+                descripcion,
+                cuenta_contable,
+                centro_costo
+            FROM req_camunda.productos
+            ORDER BY grupo, nombre;
         ';
         $rows = $conn->fetchAllAssociative($sql);
         return new JsonResponse($rows, 200);
