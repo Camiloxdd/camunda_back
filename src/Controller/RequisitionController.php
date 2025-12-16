@@ -578,10 +578,21 @@ class RequisitionController extends AbstractController
             foreach ($decisiones as $d) {
                 $productoId = $d['id'] ?? null;
                 $aprobado = isset($d['aprobado']) ? (bool)$d['aprobado'] : false;
-                $fechaAprobado = $aprobado ? ($d['fecha_aprobado'] ?? (new \DateTime())->format('Y-m-d H:i:s')) : null;
+                // Siempre registrar la fecha de acción (aprobado o rechazado)
+                $fechaAprobado = $d['fecha_aprobado'] ?? (new \DateTime())->format('Y-m-d H:i:s');
+                $comentarios = $d['comentarios'] ?? null;
+                $usuarioAccion = $d['usuario_accion'] ?? null;
+
                 $this->conn->executeStatement(
-                    "UPDATE requisicion_productos SET aprobado = ?, fecha_aprobado = ? WHERE id = ? AND requisicion_id = ?",
-                    [$aprobado ? 'aprobado' : 'rechazado', $fechaAprobado, $productoId, $id]
+                    "UPDATE requisicion_productos SET aprobado = ?, fecha_aprobado = ?, comentarios = ?, usuario_accion = ? WHERE id = ? AND requisicion_id = ?",
+                    [
+                        $aprobado ? 'aprobado' : 'rechazado',
+                        $fechaAprobado,
+                        $comentarios,
+                        $usuarioAccion,
+                        $productoId,
+                        $id
+                    ]
                 );
             }
 
@@ -723,10 +734,13 @@ class RequisitionController extends AbstractController
             $exists = $this->conn->fetchOne("SELECT id FROM requisiciones WHERE id = ?", [$id]);
             if (!$exists) return $this->json(['message' => 'Requisición no encontrada'], 404);
 
+            // 🔥 SOLO actualizar el estado de la requisición, NO los productos
             $this->conn->executeStatement("UPDATE requisiciones SET status = ? WHERE id = ?", ['devuelta', $id]);
-            $this->conn->executeStatement("UPDATE requisicion_productos SET aprobado = NULL WHERE requisicion_id = ?", [$id]);
+            // (Opcional) Actualizar aprobaciones a pendiente y visible
             $this->conn->executeStatement("UPDATE requisicion_aprobaciones SET estado = 'pendiente', visible = 0 WHERE requisicion_id = ?", [$id]);
             $this->conn->executeStatement("UPDATE requisicion_aprobaciones SET visible = 1 WHERE requisicion_id = ? AND orden = 1", [$id]);
+
+            // 🔥 NO modificar productos aquí
 
             return $this->json(['message' => 'Requisición devuelta para corrección', 'requisicionId' => $id]);
         } catch (Throwable $e) {
@@ -741,10 +755,13 @@ class RequisitionController extends AbstractController
             $exists = $this->conn->fetchOne("SELECT id FROM requisiciones WHERE id = ?", [$id]);
             if (!$exists) return $this->json(['message' => 'Requisición no encontrada'], 404);
 
-            $this->conn->executeStatement("UPDATE requisicion_productos SET aprobado = 'aprobado' WHERE requisicion_id = ?", [$id]);
-            $this->conn->executeStatement("UPDATE requisicion_aprobaciones SET estado = 'aprobada', visible = 0 WHERE requisicion_id = ?", [$id]);
+            // 🔥 SOLO actualizar el estado de la requisición, NO los productos
             $this->conn->executeStatement("UPDATE requisiciones SET status = 'Totalmente Aprobada' WHERE id = ?", [$id]);
 
+            // (Opcional) Actualizar aprobaciones a 'aprobada' y visible=0
+            $this->conn->executeStatement("UPDATE requisicion_aprobaciones SET estado = 'aprobada', visible = 0 WHERE requisicion_id = ?", [$id]);
+
+            // (Opcional) recalcular valor_total solo con productos aprobados, pero NO cambiar productos
             $sum = $this->conn->fetchAssociative("SELECT SUM(COALESCE(valor_estimado,0) * COALESCE(cantidad,1)) AS total FROM requisicion_productos WHERE requisicion_id = ? AND aprobado = 'aprobado'", [$id]);
             $nuevoTotal = $sum['total'] ?? 0;
             $this->conn->executeStatement("UPDATE requisiciones SET valor_total = ? WHERE id = ?", [$nuevoTotal, $id]);
@@ -974,7 +991,7 @@ class RequisitionController extends AbstractController
                 $sheet->getColumnDimension('L')->setWidth(25); // Ancho suficiente para números
                 $sheet->setCellValue("J$r", $requisicion["presupuestada"] ? "Sí" : "No");
                 $sheet->setCellValue("M$r", $p["descripcion"]);
-                $sheet->setCellValue("N$r", $p["compra_tecnologica"] ? "Sí Aplica" : "No Aplica");
+                $sheet->setCellValue("N$r", $p["compraTecnologica"] ? "Sí Aplica" : "No Aplica");
                 $sheet->setCellValue("R$r", $p["ergonomico"] ? "Sí Aplica" : "No Aplica");
             }
 
