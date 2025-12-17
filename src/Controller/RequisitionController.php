@@ -681,7 +681,7 @@ class RequisitionController extends AbstractController
         try {
             $this->conn->executeStatement("DELETE FROM requisicion_productos WHERE requisicion_id = ?", [$id]);
             $this->conn->executeStatement("DELETE FROM requisicion_aprobaciones WHERE requisicion_id = ?", [$id]);
-            $affected = $this->conn->executeStatement("DELETE FROM requisiones WHERE id = ?", [$id]);
+            $affected = $this->conn->executeStatement("DELETE FROM requisiciones WHERE id = ?", [$id]);
             if ($affected === 0) return $this->json(['message' => 'Requisición no encontrada'], 404);
             return $this->json(['message' => 'Requisición eliminada correctamente']);
         } catch (Throwable $e) {
