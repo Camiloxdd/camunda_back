@@ -95,7 +95,8 @@ class RequisitionController extends AbstractController
                     $p['nombre'] ?? '',
                     $p['cantidad'] ?? 1,
                     $p['descripcion'] ?? '',
-                    !empty($p['compraTecnologica']) ? 1 : 0,
+                    // 🔥 FIX: Soportar tanto compraTecnologica como compra_tecnologica
+                    !empty($p['compraTecnologica']) || !empty($p['compra_tecnologica']) ? 1 : 0,
                     !empty($p['ergonomico']) ? 1 : 0,
                     $p['valorEstimado'] ?? 0,
                     $p['centroCosto'] ?? '',
@@ -120,7 +121,8 @@ class RequisitionController extends AbstractController
             $tieneTecnologico = false;
             foreach ($productos as $p) {
                 if (!empty($p['ergonomico'])) $tieneErgonomico = true;
-                if (!empty($p['compraTecnologica'])) $tieneTecnologico = true;
+                // 🔥 FIX: Soportar ambas claves
+                if (!empty($p['compraTecnologica']) || !empty($p['compra_tecnologica'])) $tieneTecnologico = true;
             }
 
             $rolesNecesarios = [];
@@ -679,7 +681,7 @@ class RequisitionController extends AbstractController
         try {
             $this->conn->executeStatement("DELETE FROM requisicion_productos WHERE requisicion_id = ?", [$id]);
             $this->conn->executeStatement("DELETE FROM requisicion_aprobaciones WHERE requisicion_id = ?", [$id]);
-            $affected = $this->conn->executeStatement("DELETE FROM requisiciones WHERE id = ?", [$id]);
+            $affected = $this->conn->executeStatement("DELETE FROM requisiones WHERE id = ?", [$id]);
             if ($affected === 0) return $this->json(['message' => 'Requisición no encontrada'], 404);
             return $this->json(['message' => 'Requisición eliminada correctamente']);
         } catch (Throwable $e) {
@@ -967,6 +969,7 @@ class RequisitionController extends AbstractController
             // 4) Cabecera
             $sheet->setCellValue("E7", $requisicion["nombre_solicitante"] ?? "N/A");
             $sheet->setCellValue("E8", $requisicion["fecha"] ?? "N/A");
+            
             $sheet->setCellValue("E9", $requisicion["fecha_requerido_entrega"] ?? "N/A");
             $sheet->setCellValue("E10", $requisicion["justificacion"] ?? "N/A");
             $sheet->setCellValue("O7", $requisicion["area"] ?? "N/A");
@@ -990,8 +993,9 @@ class RequisitionController extends AbstractController
                 $sheet->setCellValue("L$r", $valorEstimado);
                 $sheet->getColumnDimension('L')->setWidth(25); // Ancho suficiente para números
                 $sheet->setCellValue("J$r", $requisicion["presupuestada"] ? "Sí" : "No");
-                $sheet->setCellValue("M$r", $p["descripcion"]);
-                $sheet->setCellValue("N$r", $p["compraTecnologica"] ? "Sí Aplica" : "No Aplica");
+                $sheet->setCellValue("M$r", $p["descripcion"] ?? "N/A");
+                // 🔥 FIX: Soportar ambas claves para compraTecnologica
+                $sheet->setCellValue("N$r", (!empty($p["compraTecnologica"]) || !empty($p["compra_tecnologica"])) ? "Sí Aplica" : "No Aplica");
                 $sheet->setCellValue("R$r", $p["ergonomico"] ? "Sí Aplica" : "No Aplica");
             }
 
@@ -1076,7 +1080,7 @@ class RequisitionController extends AbstractController
             }
 
             // Celdas de fecha debajo de la firma (fila 33)
-            $dateCells = ["D33", "I33", "M33", "O33", "S33"];
+            $dateCells = ["I32", "M32", "O32", "S32"];
 
             // Limpiar fechas existentes
             foreach ($dateCells as $cell) {
@@ -1095,6 +1099,14 @@ class RequisitionController extends AbstractController
                 }
             }
 
+            // 🔥 PONER LA FECHA DE CREACIÓN DE LA REQUISICIÓN EN D32 (firma solicitante)
+            $fechaSolicitante = $requisicion["fecha"] ?? null;
+            if ($fechaSolicitante) {
+                $fechaFmt = date("Y-m-d", strtotime($fechaSolicitante));
+                $sheet->setCellValue("D32", $fechaFmt);
+            } else {
+                $sheet->setCellValue("D32", "");
+            }
 
             // 6) Guardar Excel temporal
             \PhpOffice\PhpSpreadsheet\IOFactory::createWriter($spreadsheet, "Xlsx")
