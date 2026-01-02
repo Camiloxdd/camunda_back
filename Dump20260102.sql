@@ -95,7 +95,7 @@ CREATE TABLE `productos` (
 
 LOCK TABLES `productos` WRITE;
 /*!40000 ALTER TABLE `productos` DISABLE KEYS */;
-INSERT INTO `productos` VALUES (1,'Laptop Dell XPS 13','Portátil para trabajo de oficina y desarrollo','1101','1101','tec'),(2,'Monitor LG 27\"','Monitor LED 27 pulgadas Full HD','1102','1102','tec'),(3,'Teclado Mecánico Logitech','Teclado mecánico retroiluminado','1103','1103','tec'),(4,'Mouse Inalámbrico Microsoft','Mouse ergonómico inalámbrico','1104','1104','tec'),(5,'Laptop Dell XPS 13','Portátil para trabajo de oficina y desarrollo','1101','1101','tec'),(6,'Monitor LG 27\"','Monitor LED 27 pulgadas Full HD','1102','1102','tec'),(7,'Teclado Mecánico Logitech','Teclado mecánico retroiluminado','1103','1103','tec'),(8,'Mouse Inalámbrico Microsoft','Mouse ergonómico inalámbrico','1104','1104','tec'),(9,'Silla Ergonómica Ergosupport','Silla con soporte lumbar ajustable para postura saludable','2101','2101','erg'),(10,'Reposapiés Ergonómico Ajustable','Reposapiés con inclinación regulable para mejorar circulación','2102','2102','erg'),(11,'Soporte de Monitor Ajustable','Elevador de monitor para mejorar la postura del cuello','2103','2102','erg'),(12,'Almohadilla Ergonómica para Muñeca','Almohadilla de gel para apoyo de muñeca en teclado o mouse','2104','2104','erg'),(13,'Laptop Dell XPS 13','Laptop para trabajo operativo y desarrollo','1101','1101','tec'),(14,'Monitor LG 27\"','Monitor LED 27 pulgadas Full HD','1102','1102','tec'),(15,'Mouse Inalámbrico Logitech','Mouse ergonómico inalámbrico','1104','1104','tec'),(16,'Teclado Mecánico Logitech','Teclado mecánico retroiluminado','1103','1103','tec'),(17,'Silla Ergonómica Ergosupport','Silla para soporte lumbar regulable','2101','2101','erg'),(18,'Reposapiés Ajustable','Reposapiés con inclinación regulable','2102','2102','erg'),(19,'Soporte de Monitor Ajustable','Elevador de monitor para mejorar postura','2103','2103','erg'),(20,'Resma Papel Carta 500 hojas','Papel tamaño carta 75g','3101','3101','pap'),(21,'Bolígrafo Azul x12','Caja de bolígrafos punta fina','3102','3102','pap'),(22,'Cuaderno Profesional 100 hojas','Cuaderno argollado profesional','3103','3103','pap'),(23,'Café en grano 1kg','Café para máquina de oficina','4101','4101','caf'),(24,'Azúcar refinada 1kg','Azúcar para cafetería','4102','4102','caf'),(25,'Vasos térmicos x50','Vasos desechables térmicos','4103','4103','caf');
+INSERT INTO `productos` VALUES (1,'Laptop Dell XPS 13','Portátil para trabajo de oficina y desarrollo','1101','1062104','tec'),(2,'Monitor LG 27\"','Monitor LED 27 pulgadas Full HD','1102','1062104','tec'),(3,'Teclado Mecánico Logitech','Teclado mecánico retroiluminado','1103','1062104','tec'),(4,'Mouse Inalámbrico Microsoft','Mouse ergonómico inalámbrico','1104','1062104','tec'),(5,'Laptop Dell XPS 13','Portátil para trabajo de oficina y desarrollo','1101','1062104','tec'),(6,'Monitor LG 27\"','Monitor LED 27 pulgadas Full HD','1102','1062104','tec'),(7,'Teclado Mecánico Logitech','Teclado mecánico retroiluminado','1103','1062104','tec'),(8,'Mouse Inalámbrico Microsoft','Mouse ergonómico inalámbrico','1104','1062104','tec'),(9,'Silla Ergonómica Ergosupport','Silla con soporte lumbar ajustable para postura saludable','2101','1062104','erg'),(10,'Reposapiés Ergonómico Ajustable','Reposapiés con inclinación regulable para mejorar circulación','2102','1062104','erg'),(11,'Soporte de Monitor Ajustable','Elevador de monitor para mejorar la postura del cuello','2103','1062104','erg'),(12,'Almohadilla Ergonómica para Muñeca','Almohadilla de gel para apoyo de muñeca en teclado o mouse','2104','1062104','erg'),(13,'Laptop Dell XPS 13','Laptop para trabajo operativo y desarrollo','1101','1062104','tec'),(14,'Monitor LG 27\"','Monitor LED 27 pulgadas Full HD','1102','1062104','tec'),(15,'Mouse Inalámbrico Logitech','Mouse ergonómico inalámbrico','1104','1062104','tec'),(16,'Teclado Mecánico Logitech','Teclado mecánico retroiluminado','1103','1062104','tec'),(17,'Silla Ergonómica Ergosupport','Silla para soporte lumbar regulable','2101','1062104','erg'),(18,'Reposapiés Ajustable','Reposapiés con inclinación regulable','2102','1062104','erg'),(19,'Soporte de Monitor Ajustable','Elevador de monitor para mejorar postura','2103','1062104','erg'),(20,'Resma Papel Carta 500 hojas','Papel tamaño carta 75g','3101','1062104','pap'),(21,'Bolígrafo Azul x12','Caja de bolígrafos punta fina','3102','1062104','pap'),(22,'Cuaderno Profesional 100 hojas','Cuaderno argollado profesional','3103','1062104','pap'),(23,'Café en grano 1kg','Café para máquina de oficina','4101','1062104','caf'),(24,'Azúcar refinada 1kg','Azúcar para cafetería','4102','1062104','caf'),(25,'Vasos térmicos x50','Vasos desechables térmicos','4103','1062104','caf');
 /*!40000 ALTER TABLE `productos` ENABLE KEYS */;
 UNLOCK TABLES;
 
@@ -126,7 +126,7 @@ CREATE TABLE `requisicion_aprobaciones` (
   PRIMARY KEY (`id`),
   KEY `requisicion_id` (`requisicion_id`),
   CONSTRAINT `requisicion_aprobaciones_ibfk_1` FOREIGN KEY (`requisicion_id`) REFERENCES `requisiciones` (`id`) ON DELETE CASCADE
-) ENGINE=InnoDB AUTO_INCREMENT=618 DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci;
+) ENGINE=InnoDB AUTO_INCREMENT=719 DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci;
 /*!40101 SET character_set_client = @saved_cs_client */;
 
 --
@@ -135,7 +135,7 @@ CREATE TABLE `requisicion_aprobaciones` (
 
 LOCK TABLES `requisicion_aprobaciones` WRITE;
 /*!40000 ALTER TABLE `requisicion_aprobaciones` DISABLE KEYS */;
-INSERT INTO `requisicion_aprobaciones` VALUES (614,189,'TyP','dicTYP','Diego Alfonso Diaz Devia',0,NULL,'pendiente',0,0,0,0,0,0,1,1),(615,189,'TyP','gerTyC','Wilson Ricardo Marulanda',0,NULL,'pendiente',0,0,0,0,0,0,2,0),(616,190,'TyP','dicTYP','Diego Alfonso Diaz Devia',0,'2025-12-11 08:18:39','aprobada',0,0,0,0,0,0,1,0),(617,190,'TyP','gerTyC','Wilson Ricardo Marulanda',0,'2025-12-11 08:22:07','aprobada',0,0,0,0,0,0,2,0);
+INSERT INTO `requisicion_aprobaciones` VALUES (710,234,'TyP','dicTYP','Diego Alfonso Diaz Devia',0,'2025-12-30 14:06:55','aprobada',0,0,0,0,0,0,1,0),(711,234,'TyP','gerTyC','Wilson Ricardo Marulanda',0,'2025-12-30 14:09:11','aprobada',0,0,0,0,0,0,2,0),(712,234,'SST','dicSST','Nelly Paola Coca',0,'2025-12-30 14:12:50','aprobada',0,0,0,0,0,0,3,0),(713,235,'GerenciaAdmin','gerAdmin','Carlos Alfonso López Vargas',0,NULL,'pendiente',0,0,0,0,0,0,1,1),(714,235,'GerenciaGeneral','gerGeneral','Daniel Alejandro Quiros Bertocchi',0,NULL,'pendiente',0,0,0,0,0,0,2,0),(715,235,'TyP','dicTYP','Diego Alfonso Diaz Devia',0,NULL,'pendiente',0,0,0,0,0,0,3,0),(716,235,'TyP','gerTyC','Wilson Ricardo Marulanda',0,NULL,'pendiente',0,0,0,0,0,0,4,0),(717,236,'TyP','dicTYP','Diego Alfonso Diaz Devia',0,NULL,'pendiente',0,0,0,0,0,0,1,1),(718,236,'TyP','gerTyC','Wilson Ricardo Marulanda',0,NULL,'pendiente',0,0,0,0,0,0,2,0);
 /*!40000 ALTER TABLE `requisicion_aprobaciones` ENABLE KEYS */;
 UNLOCK TABLES;
 
@@ -152,7 +152,7 @@ CREATE TABLE `requisicion_productos` (
   `nombre` varchar(150) DEFAULT NULL,
   `cantidad` int DEFAULT '1',
   `fecha_aprobado` varchar(100) DEFAULT NULL,
-  `descripcion` text,
+  `descripcion` varchar(255) DEFAULT 'No tiene',
   `compra_tecnologica` tinyint(1) DEFAULT '0',
   `ergonomico` tinyint(1) DEFAULT '0',
   `visible` tinyint DEFAULT NULL,
@@ -160,10 +160,15 @@ CREATE TABLE `requisicion_productos` (
   `centro_costo` varchar(100) DEFAULT NULL,
   `cuenta_contable` varchar(100) DEFAULT NULL,
   `aprobado` enum('pendiente','aprobado','rechazado') DEFAULT 'pendiente',
+  `comentarios` varchar(255) DEFAULT NULL,
+  `usuario_accion` varchar(255) DEFAULT NULL,
+  `papeleria` int DEFAULT '0',
+  `cafeteria` int DEFAULT '0',
+  `user_area` varchar(45) DEFAULT NULL,
   PRIMARY KEY (`id`),
   KEY `requisicion_id` (`requisicion_id`),
   CONSTRAINT `requisicion_productos_ibfk_1` FOREIGN KEY (`requisicion_id`) REFERENCES `requisiciones` (`id`) ON DELETE CASCADE
-) ENGINE=InnoDB AUTO_INCREMENT=416 DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci;
+) ENGINE=InnoDB AUTO_INCREMENT=508 DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci;
 /*!40101 SET character_set_client = @saved_cs_client */;
 
 --
@@ -172,7 +177,7 @@ CREATE TABLE `requisicion_productos` (
 
 LOCK TABLES `requisicion_productos` WRITE;
 /*!40000 ALTER TABLE `requisicion_productos` DISABLE KEYS */;
-INSERT INTO `requisicion_productos` VALUES (413,189,'Laptop Dell XPS 13',1,NULL,'',1,0,NULL,2150000.00,'1101','1101',NULL),(414,189,'Teclado Mecánico Logitech',1,NULL,'',1,0,NULL,1500000.00,'1103','1103',NULL),(415,190,'Laptop Dell XPS 13',1,'2025-12-11T13:21:54.532Z','',1,0,NULL,500000.00,'1101','1101','aprobado');
+INSERT INTO `requisicion_productos` VALUES (502,234,'Soporte de Monitor Ajustable',1,'2025-12-30T19:11:50.425Z','',0,1,NULL,1000000.00,'1062104','2103','aprobado',NULL,'Nelly Paola Coca',0,0,'TyP'),(503,234,'Almohadilla Ergonómica para Muñeca',1,'2025-12-30T19:12:23.055Z','',0,1,NULL,500000.00,'1062104','2104','rechazado','JIJIJAJA','Nelly Paola Coca',0,0,'TyP'),(504,234,'Monitor LG 27\"',1,'2025-12-30T19:09:02.698Z','',1,0,NULL,1500000.00,'1062104','1102','aprobado',NULL,'Wilson Ricardo Marulanda',0,0,'TyP'),(505,234,'Teclado Mecánico Logitech',1,'2025-12-30T19:06:31.367Z','',1,0,NULL,200000.00,'1062104','1103','rechazado','CANEQUERO CAMILP','Diego Alfonso Diaz Devia',0,0,'TyP'),(506,235,'Vasos térmicos x50',1,NULL,'',0,0,NULL,15000000.00,'1062104','4103',NULL,NULL,NULL,0,1,'TyP'),(507,236,'Vasos térmicos x50',1,NULL,'',0,0,NULL,1500000.00,'1062104','4103',NULL,NULL,NULL,0,1,'TyP');
 /*!40000 ALTER TABLE `requisicion_productos` ENABLE KEYS */;
 UNLOCK TABLES;
 
@@ -190,7 +195,7 @@ CREATE TABLE `requisiciones` (
   `fecha` date NOT NULL,
   `fecha_requerido_entrega` date DEFAULT NULL,
   `tiempoAproximadoGestion` varchar(60) DEFAULT NULL,
-  `justificacion` text,
+  `justificacion` varchar(255) DEFAULT 'No tiene',
   `area` varchar(100) DEFAULT NULL,
   `sede` varchar(100) DEFAULT NULL,
   `urgencia` varchar(50) DEFAULT NULL,
@@ -200,7 +205,7 @@ CREATE TABLE `requisiciones` (
   `status` varchar(50) DEFAULT 'pendiente',
   `created_at` timestamp NULL DEFAULT CURRENT_TIMESTAMP,
   PRIMARY KEY (`id`)
-) ENGINE=InnoDB AUTO_INCREMENT=191 DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci;
+) ENGINE=InnoDB AUTO_INCREMENT=237 DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci;
 /*!40101 SET character_set_client = @saved_cs_client */;
 
 --
@@ -209,7 +214,7 @@ CREATE TABLE `requisiciones` (
 
 LOCK TABLES `requisiciones` WRITE;
 /*!40000 ALTER TABLE `requisiciones` DISABLE KEYS */;
-INSERT INTO `requisiciones` VALUES (189,NULL,'Juan Camilo Bello Roa','2025-12-11','2025-12-12','1','','TyP','cota','Baja',0,3650000,'2251799813686778','pendiente','2025-12-11 13:09:24'),(190,NULL,'Juan Camilo Bello Roa','2025-12-11','2025-12-13','1','','TyP','cota','Baja',0,500000,'2251799813689425','Aprobada','2025-12-11 13:16:37');
+INSERT INTO `requisiciones` VALUES (234,NULL,'Juan Camilo Bello Roa','2025-12-30','2025-12-31','2','','TyP','cota','Baja',0,2500000,'2251799813898901','Totalmente Aprobada','2025-12-30 19:03:57'),(235,NULL,'Juan Camilo Bello Roa','2026-01-02','2026-01-31','22','','TyP','cota','Baja',0,15000000,'2251799814508043','pendiente','2026-01-02 16:57:50'),(236,NULL,'Juan Camilo Bello Roa','2026-01-02','2026-01-03','2','','TyP','cota','Baja',0,1500000,'2251799814529552','pendiente','2026-01-02 19:15:50');
 /*!40000 ALTER TABLE `requisiciones` ENABLE KEYS */;
 UNLOCK TABLES;
 
@@ -234,7 +239,7 @@ CREATE TABLE `user` (
   `solicitante` tinyint(1) DEFAULT '0',
   `comprador` tinyint(1) DEFAULT '0',
   PRIMARY KEY (`id`)
-) ENGINE=InnoDB AUTO_INCREMENT=16 DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci;
+) ENGINE=InnoDB AUTO_INCREMENT=21 DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci;
 /*!40101 SET character_set_client = @saved_cs_client */;
 
 --
@@ -243,7 +248,7 @@ CREATE TABLE `user` (
 
 LOCK TABLES `user` WRITE;
 /*!40000 ALTER TABLE `user` DISABLE KEYS */;
-INSERT INTO `user` VALUES (3,'Nelly Paola Coca Sierra','n.coca@coopidrogas.com.co','$2b$10$42fHo1pc3yXs2W470SqGL.GXLhj85p/12B0OpCV3s6tYjfyngIvxS','dicSST','','SST','cota',0,1,0,0),(5,'Daniel Alejandro Quiros Bertocchi','gerenciaGeneralTesting@coopidrogas.com.co','$2b$10$y5XPDf1quHo0C6R3e0/c8ulhRh1qLk6vddZr4h8WR5QXynQztKxpG','gerGeneral','3224399893','GerenciaGeneral','cota',0,1,0,0),(6,'Diego Alfonso Diaz Devia','d.diaz@coopidrogas.com.co','$2b$10$7gDyQfoc.HzNG/z.9jLIzuEsFS/7WFFxN0RpyYvJ8a2hZu9gQb6Tu','dicTYP','3125874818','TyP','cota',0,1,0,0),(7,'Wilson Ricardo Marulanda','w.marulanda@coopidrogas.com.co','$2b$10$RPL79cMse7ZT5UeDFUSukOlb3p7AnzKX3ZkIF86pXAvU0q5Ik1wXe','gerTyC','123456789','TyP','cota',0,1,0,0),(8,'Juan Camilo Bello Roa','pract7.desarrollo@coopidrogas.com.co','$2b$10$HYbiZaqdninuxTJScI0ceOP1gs0MTWlvY9jV7TMiMBXMLhEz6Pqza','analistaQA','','TyP','cota',1,0,1,0),(9,'Carlos Alfonso López Vargas','gerenciaAdminTesting@coopidrogas.com.co','$2b$10$amRejwiMpAQwoSUZHz208OrITxycmf1kh8/1C452W6EUxuPfT4LW.','gerAdmin','ASDASD','GerenciaAdmin','cota',0,1,0,0),(12,'Santiago Barinas','pract6.desarrollo@coopidrogas.com.co','$2b$10$ZZulhbPzhN0wVT91iva4yuoOb8jpXueLejQtpecHV2CHb0Mufa5x6','analistaQA','3214961814','TyP','cota',0,0,1,0),(13,'Edison Kenneth Campos Avila','k.campos@coopidrogas.com.co','$2b$10$iNmYe5pnKJg.YxPk0bU7vOE77vNqJGPCat5oWFawJutnG.8kuyTxm','dicSST','3224399893','SST','cota',0,1,0,0),(14,'Armando Puertas','elpepe@gmail.com','$2y$13$svXDaZYXAOoSo5rFvNHB/.xaULUxvmuGvcC1YB83xC1Ms9EwzXVX2','analistaQA','3224399893','TyP','cota',0,0,0,1);
+INSERT INTO `user` VALUES (3,'Nelly Paola Coca','n.coca@coopidrogas.com.co','$2b$10$42fHo1pc3yXs2W470SqGL.GXLhj85p/12B0OpCV3s6tYjfyngIvxS','dicSST','','SST','cota',0,1,0,0),(5,'Daniel Alejandro Quiros Bertocchi','gerenciaGeneralTesting@coopidrogas.com.co','$2b$10$y5XPDf1quHo0C6R3e0/c8ulhRh1qLk6vddZr4h8WR5QXynQztKxpG','gerGeneral','3224399893','GerenciaGeneral','cota',0,1,0,0),(6,'Diego Alfonso Diaz Devia','d.diaz@coopidrogas.com.co','$2b$10$7gDyQfoc.HzNG/z.9jLIzuEsFS/7WFFxN0RpyYvJ8a2hZu9gQb6Tu','dicTYP','3125874818','TyP','cota',0,1,0,0),(7,'Wilson Ricardo Marulanda','w.marulanda@coopidrogas.com.co','$2b$10$RPL79cMse7ZT5UeDFUSukOlb3p7AnzKX3ZkIF86pXAvU0q5Ik1wXe','gerTyC','123456789','TyP','cota',0,1,0,0),(8,'Juan Camilo Bello Roa','pract7.desarrollo@coopidrogas.com.co','$2b$10$HYbiZaqdninuxTJScI0ceOP1gs0MTWlvY9jV7TMiMBXMLhEz6Pqza','analistaQA','','TyP','cota',1,0,1,0),(9,'Carlos Alfonso López Vargas','gerenciaAdminTesting@coopidrogas.com.co','$2b$10$amRejwiMpAQwoSUZHz208OrITxycmf1kh8/1C452W6EUxuPfT4LW.','gerAdmin','ASDASD','GerenciaAdmin','cota',0,1,0,0),(13,'Edison Kenneth Campos Avila','k.campos@coopidrogas.com.co','$2b$10$iNmYe5pnKJg.YxPk0bU7vOE77vNqJGPCat5oWFawJutnG.8kuyTxm','dicSST','3224399893','SST','cota',0,1,0,0),(14,'Armando Puertas','elpepe@gmail.com','$2y$13$svXDaZYXAOoSo5rFvNHB/.xaULUxvmuGvcC1YB83xC1Ms9EwzXVX2','analistaQA','3224399893','TyP','cota',0,0,0,1),(16,'tester','infoweb@coopidrogas.org','$2y$13$0CZae2HfluJbfKgB0LsegOMQ3OqqEhGfJxSJrXm1POEz3MjzU2R56','analistaQA','3224399893','TyP','cota',1,0,1,0),(17,'Usuario Comprador','compras.coopidrogas@coopidrogas.com.co','$2y$13$as71uk.LRxLlEBgt29kOfuXe92dxqhVFlYHhU6LoZQdUE.bBddaIq','analistaQA','3224399893','TyP','cota',0,0,0,1),(18,'tester','pract9.desarrollo@coopidrogas.com.co','$2y$13$KinBR8rsfAkklvUiCN.wIOaCpMywi/9L2iirj82ak8I1W/JNu5Ot6','gerCAF','3224399893','CAF','cota',0,1,0,0),(19,'tester','pract10.desarrollo@coopidrogas.com.co','$2y$13$64.tdIX.kVS/vvNIuQY2pOxO/jOIzsLHs2WsqV6tJRV.hKgqQ/NV6','dicPAP','3224399893','PAP','cota',0,1,0,0),(20,'tester','pract11.desarrollo@coopidrogas.com.co','$2y$13$Crl3VT8BhXxMjgCg/k7ihuO2OTqAI5NF/R3FW1pL5sPpsW3pKIp6a','gerPAP','3224399893','PAP','cota',0,1,0,0);
 /*!40000 ALTER TABLE `user` ENABLE KEYS */;
 UNLOCK TABLES;
 /*!40103 SET TIME_ZONE=@OLD_TIME_ZONE */;
@@ -256,4 +261,4 @@ UNLOCK TABLES;
 /*!40101 SET COLLATION_CONNECTION=@OLD_COLLATION_CONNECTION */;
 /*!40111 SET SQL_NOTES=@OLD_SQL_NOTES */;
 
--- Dump completed on 2025-12-12 15:44:36
+-- Dump completed on 2026-01-02 15:48:36

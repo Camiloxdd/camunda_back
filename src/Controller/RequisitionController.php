@@ -90,24 +90,39 @@ class RequisitionController extends AbstractController
             // insertar productos (batch)
             $values = [];
             foreach ($productos as $p) {
+                $compraTecnologica = !empty($p['compraTecnologica']) || !empty($p['compra_tecnologica']) ? 1 : 0;
+                $ergonomico = !empty($p['ergonomico']) ? 1 : 0;
+
+                // Normaliza papeleria y cafeteria para aceptar true/false, "true"/"false", 1/0, etc.
+                $papeleria = (
+                    (isset($p['papeleria']) && ($p['papeleria'] === true || $p['papeleria'] === 1 || $p['papeleria'] === "1" || $p['papeleria'] === "true")) ||
+                    (isset($p['prod_papeleria']) && ($p['prod_papeleria'] === true || $p['prod_papeleria'] === 1 || $p['prod_papeleria'] === "1" || $p['prod_papeleria'] === "true"))
+                ) ? 1 : 0;
+                $cafeteria = (
+                    (isset($p['cafeteria']) && ($p['cafeteria'] === true || $p['cafeteria'] === 1 || $p['cafeteria'] === "1" || $p['cafeteria'] === "true")) ||
+                    (isset($p['prod_cafeteria']) && ($p['prod_cafeteria'] === true || $p['prod_cafeteria'] === 1 || $p['prod_cafeteria'] === "1" || $p['prod_cafeteria'] === "true"))
+                ) ? 1 : 0;
+
                 $values[] = [
                     $requisicionId,
                     $p['nombre'] ?? '',
                     $p['cantidad'] ?? 1,
                     $p['descripcion'] ?? '',
-                    // 🔥 FIX: Soportar tanto compraTecnologica como compra_tecnologica
-                    !empty($p['compraTecnologica']) || !empty($p['compra_tecnologica']) ? 1 : 0,
-                    !empty($p['ergonomico']) ? 1 : 0,
+                    $compraTecnologica,
+                    $ergonomico,
+                    $papeleria,
+                    $cafeteria,
                     $p['valorEstimado'] ?? 0,
                     $p['centroCosto'] ?? '',
                     $p['cuentaContable'] ?? '',
+                    $p['userArea'] ?? '',
                     null
                 ];
             }
-            // Utilizamos un INSERT multiple manual usando prepared statements
+            // 🔥 Ajusta el INSERT para incluir papeleria y cafeteria
             foreach ($values as $row) {
                 $this->conn->executeStatement(
-                    'INSERT INTO requisicion_productos (requisicion_id, nombre, cantidad, descripcion, compra_tecnologica, ergonomico, valor_estimado, centro_costo, cuenta_contable, aprobado) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)',
+                    'INSERT INTO requisicion_productos (requisicion_id, nombre, cantidad, descripcion, compra_tecnologica, ergonomico, papeleria, cafeteria, valor_estimado, centro_costo, cuenta_contable, user_area, aprobado) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)',
                     $row
                 );
             }
@@ -119,16 +134,35 @@ class RequisitionController extends AbstractController
 
             $tieneErgonomico = false;
             $tieneTecnologico = false;
+            $tienePapeleria = false;
+            $tieneCafeteria = false;
             foreach ($productos as $p) {
                 if (!empty($p['ergonomico'])) $tieneErgonomico = true;
-                // 🔥 FIX: Soportar ambas claves
                 if (!empty($p['compraTecnologica']) || !empty($p['compra_tecnologica'])) $tieneTecnologico = true;
+                if (!empty($p['papeleria']) || !empty($p['prod_papeleria'])) $tienePapeleria = true;
+                if (!empty($p['cafeteria']) || !empty($p['prod_cafeteria'])) $tieneCafeteria = true;
             }
 
             $rolesNecesarios = [];
             if ($tieneTecnologico) array_push($rolesNecesarios, 'dicTYP', 'gerTyC');
             if ($tieneErgonomico) array_push($rolesNecesarios, 'dicSST', 'gerSST');
             if ($requiereAltas && !$presupuestada) array_push($rolesNecesarios, 'gerAdmin', 'gerGeneral');
+
+            // 🔥 NUEVO: Si hay productos Papelería o Cafetería, agregar dic y ger del área del solicitante
+            if (($tienePapeleria || $tieneCafeteria) && $area) {
+                $areaCargoMap = [
+                    'TyP' => ['dicTYP', 'gerTyC'],
+                    'SST' => ['dicSST', 'gerSST'],
+                    // Agrega más áreas si es necesario
+                ];
+                if (isset($areaCargoMap[$area])) {
+                    foreach ($areaCargoMap[$area] as $rol) {
+                        if (!in_array($rol, $rolesNecesarios, true)) {
+                            $rolesNecesarios[] = $rol;
+                        }
+                    }
+                }
+            }
 
             $aprobadores = [];
             if (!empty($rolesNecesarios)) {
@@ -146,6 +180,8 @@ class RequisitionController extends AbstractController
                     }
                 }
             }
+
+            
 
             // insertar aprobaciones con orden y visibilidad
             $orden = 1;
@@ -681,7 +717,7 @@ class RequisitionController extends AbstractController
         try {
             $this->conn->executeStatement("DELETE FROM requisicion_productos WHERE requisicion_id = ?", [$id]);
             $this->conn->executeStatement("DELETE FROM requisicion_aprobaciones WHERE requisicion_id = ?", [$id]);
-            $affected = $this->conn->executeStatement("DELETE FROM requisiones WHERE id = ?", [$id]);
+            $affected = $this->conn->executeStatement("DELETE FROM requisiciones WHERE id = ?", [$id]);
             if ($affected === 0) return $this->json(['message' => 'Requisición no encontrada'], 404);
             return $this->json(['message' => 'Requisición eliminada correctamente']);
         } catch (Throwable $e) {
@@ -1197,6 +1233,19 @@ class RequisitionController extends AbstractController
             return $this->json(['productos' => $productos]);
         } catch (Throwable $e) {
             return $this->json(['error' => 'Error al obtener productos', 'detail' => $e->getMessage()], 500);
+        }
+    }
+    #[Route('/requisiciones/{id}/aprobadores', name: 'requisiciones_aprobadores_by_id', methods: ['GET'])]
+    public function getAprobadoresById(int $id): JsonResponse
+    {
+        try{
+            $aprobadoresInfo = $this->conn-> fetchAllAssociative(
+                "SELECT * FROM requisicion_aprobaciones WHERE requisicion_id = ?",
+                [$id]
+            );
+            return $this->json(['aprobadores' => $aprobadoresInfo]);
+        } catch (Throwable $e) {
+            return $this->json(['error' => 'Error al obtener la informacion de los aprobadores', 'detail' => $e->getMessage()], 500);
         }
     }
 }
