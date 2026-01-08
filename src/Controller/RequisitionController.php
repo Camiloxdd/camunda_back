@@ -24,6 +24,7 @@ use App\Service\RequisitionPdfService;
 use Psr\Log\LoggerInterface;
 use Throwable;
 use PhpOffice\PhpSpreadsheet\Worksheet\PageSetup;
+use Symfony\Component\HttpClient\HttpClient;
 
 #[Route('/api', name: 'api_')]
 class RequisitionController extends AbstractController
@@ -31,8 +32,11 @@ class RequisitionController extends AbstractController
     private Connection $conn;
     private RequisitionService $service;
 
-    public function __construct(Connection $connection, RequisitionService $service, private LoggerInterface $logger)
-    {
+    public function __construct(
+        Connection $connection,
+        RequisitionService $service,
+        private LoggerInterface $logger
+    ) {
         $this->conn = $connection;
         $this->service = $service;
     }
@@ -127,7 +131,7 @@ class RequisitionController extends AbstractController
                 );
             }
 
-            // determinar roles necesarios (misma lógica)
+            // 🔥 CÁLCULO DE APROBADORES (sin guardar en BD)
             $SMLV = 1300000;
             $limite = $SMLV * 10;
             $requiereAltas = $valorTotal >= $limite;
@@ -144,25 +148,79 @@ class RequisitionController extends AbstractController
             }
 
             $rolesNecesarios = [];
-            if ($tieneTecnologico) array_push($rolesNecesarios, 'dicTYP', 'gerTyC');
-            if ($tieneErgonomico) array_push($rolesNecesarios, 'dicSST', 'gerSST');
-            if ($requiereAltas && !$presupuestada) array_push($rolesNecesarios, 'gerAdmin', 'gerGeneral');
-
-            // 🔥 NUEVO: Si hay productos Papelería o Cafetería, agregar dic y ger del área del solicitante
-            if (($tienePapeleria || $tieneCafeteria) && $area) {
-                $areaCargoMap = [
-                    'TyP' => ['dicTYP', 'gerTyC'],
-                    'SST' => ['dicSST', 'gerSST'],
-                    // Agrega más áreas si es necesario
-                ];
-                if (isset($areaCargoMap[$area])) {
-                    foreach ($areaCargoMap[$area] as $rol) {
-                        if (!in_array($rol, $rolesNecesarios, true)) {
-                            $rolesNecesarios[] = $rol;
-                        }
-                    }
-                }
+            if (
+                $tieneTecnologico
+                && $solicitante['area'] === 'TyP'
+                && $tieneErgonomico
+                && $requiereAltas
+                && !$presupuestada
+            ) {
+                array_push(
+                    $rolesNecesarios,
+                    'dicTYP',
+                    'gerTyC',
+                    'dicSST',
+                    'gerAdmin',
+                    'gerGeneral'
+                );
+            } else if (
+                $tieneTecnologico
+                && $solicitante['area'] === 'TyP'
+                && $tieneErgonomico
+                && $requiereAltas
+                && $presupuestada
+            ) {
+                array_push(
+                    $rolesNecesarios,
+                    'dicTYP',
+                    'gerTyC',
+                    'dicSST'
+                );
+            } else if (
+                $tieneTecnologico
+                && $solicitante['area'] === 'TyP'
+                && $tieneErgonomico
+            ) {
+                array_push(
+                    $rolesNecesarios,
+                    'dicTYP',
+                    'gerTyC',
+                    'dicSST'
+                );
+            } else if (
+                $tieneTecnologico
+                && $solicitante['area'] === 'TyP'
+            ) {
+                array_push(
+                    $rolesNecesarios,
+                    'dicTYP',
+                    'gerTyC'
+                );
             }
+
+            if (
+                $tieneErgonomico && $solicitante['area'] === 'SST'
+                && $tieneTecnologico && $requiereAltas && !$presupuestada
+            ) {
+
+                array_push($rolesNecesarios, 'dicSST', 'gerSST', 'dicTYP', 'gerAdmin', 'gerGeneral');
+            } else if (
+                $tieneErgonomico && $solicitante['area'] === 'SST'
+                && $tieneTecnologico && $requiereAltas && $presupuestada
+            ) {
+
+                array_push($rolesNecesarios, 'dicSST', 'gerSST', 'dicTYP');
+            } else if (
+                $tieneErgonomico && $solicitante['area'] === 'SST'
+                && $tieneTecnologico
+            ) {
+
+                array_push($rolesNecesarios, 'dicSST', 'gerSST', 'dicTYP');
+            } else if ($tieneErgonomico && $solicitante['area'] === 'SST') {
+
+                array_push($rolesNecesarios, 'dicSST', 'gerSST');
+            }
+
 
             $aprobadores = [];
             if (!empty($rolesNecesarios)) {
@@ -181,32 +239,127 @@ class RequisitionController extends AbstractController
                 }
             }
 
-            
-
-            // insertar aprobaciones con orden y visibilidad
-            $orden = 1;
-            foreach ($aprobadores as $i => $aprob) {
-                $visible = ($i === 0) ? 1 : 0;
-                $this->conn->executeStatement(
-                    'INSERT INTO requisicion_aprobaciones (requisicion_id, rol_aprobador, nombre_aprobador, area, estado, orden, visible) VALUES (?, ?, ?, ?, ?, ?, ?)',
-                    [$requisicionId, $aprob['rol'], $aprob['nombre'], $aprob['area'], 'pendiente', $orden, $visible]
-                );
-                $orden++;
-            }
+            // 🔥 NO GUARDAR APROBACIONES EN BD - solo retornarlas en JSON
 
             $this->conn->commit();
 
+            // 🔥 LLAMAR A SPRINGBOOT PARA GUARDAR APROBADORES
+            $this->llamarSpringBoot(
+                'http://localhost:8086',
+                $requisicionId,
+                $solicitante,
+                $productos,
+                $aprobadores,
+                $valorTotal
+            );
+
+            // 🔥 RETORNAR REQUISICION + APROBADORES (para que SpringBoot los procese)
             return $this->json([
-                'message' => 'Requisición creada correctamente con aprobadores asignados',
-                'requisicionId' => $requisicionId,
-                'valorTotal' => $valorTotal,
-                'aprobadores' => $aprobadores
+                'message' => 'Requisición creada correctamente',
+                'requisicion' => [
+                    'id' => $requisicionId,
+                    'nombre_solicitante' => $nombre,
+                    'fecha' => $fecha,
+                    'fecha_requerido_entrega' => $fechaRequeridoEntrega,
+                    'tiempoAproximadoGestion' => $tiempoAproximadoGestion,
+                    'justificacion' => $justificacion,
+                    'area' => $area,
+                    'sede' => $sede,
+                    'urgencia' => $urgencia,
+                    'presupuestada' => $presupuestada,
+                    'valor_total' => $valorTotal,
+                    'status' => 'pendiente',
+                    'process_instance_key' => $processInstanceKey
+                ],
+                'aprobadores' => $aprobadores,
+                'rolesNecesarios' => $rolesNecesarios
             ], 201);
         } catch (Throwable $e) {
             if ($this->conn->isTransactionActive()) {
                 $this->conn->rollBack();
             }
             return $this->json(['message' => 'Error al crear la requisición', 'error' => $e->getMessage()], 500);
+        }
+    }
+
+    private function llamarSpringBoot(string $baseUrl, int $requisicionId, array $solicitante, array $productos, array $aprobadores, float $valorTotal): void
+    {
+        try {
+            // 1️⃣ Crear cliente HTTP sin inyección
+            $client = HttpClient::create();
+
+            // 🔥 ANALIZAR PRODUCTOS PARA OBTENER FLAGS
+            $productoSST = false;
+            $productoTyP = false;
+            $area = '';
+
+
+            foreach ($productos as $p) {
+                if (!empty($p['ergonomico']) || !empty($p['ergonomico_numeric'])) {
+                    $productoSST = true;
+                }
+                if (!empty($p['compraTecnologica']) || !empty($p['compra_tecnologica'])) {
+                    $productoTyP = true;
+                }
+            }
+
+            // Obtener área del solicitante
+            if (!empty($solicitante['area'])) {
+                $area = $solicitante['area'];
+            }
+
+            // 🔥 PREPARAR DATOS PARA /iniciar-proceso
+            $iniciarProcesoDatos = [
+                'valor' => $valorTotal,
+                'area' => $area,
+                'requisicion_id' => $requisicionId,
+                'productoSST' => $productoSST,
+                'productoTyP' => $productoTyP,
+                'url' => 'http://localhost:8086/guardar'  // Ajusta según tu URL del frontend
+            ];
+
+            $this->logger->info("📤 Enviando a /iniciar-proceso: " . json_encode($iniciarProcesoDatos));
+
+            $response = $client->request('POST', "http://localhost:8086/iniciar-proceso", [
+                'json' => $iniciarProcesoDatos,
+                'headers' => ['Content-Type' => 'application/json']
+            ]);
+
+            $responseData = json_decode($response->getContent(), true);
+            $processInstanceKey = $responseData['processInstanceKey'] ?? null;
+
+            if (!$processInstanceKey) {
+                throw new \Exception("No se obtuvo processInstanceKey de SpringBoot");
+            }
+
+            // 2️⃣ Actualizar la requisición con el processInstanceKey
+            $this->conn->executeStatement(
+                "UPDATE requisiciones SET process_instance_key = ? WHERE id = ?",
+                [$processInstanceKey, $requisicionId]
+            );
+
+            // 3️⃣ Llamar a /guardar para que SpringBoot guarde los aprobadores
+            $guardarDatos = [
+                'requisicionId' => $requisicionId,
+                'aprobadores' => $aprobadores
+            ];
+
+            $this->logger->info("📤 Enviando a /guardar: " . json_encode($guardarDatos));
+
+            $response = $client->request('POST', "http://localhost:8086/guardar", [
+                'json' => $guardarDatos,
+                'headers' => ['Content-Type' => 'application/json']
+            ]);
+
+            // Verificar que la respuesta fue exitosa
+            if ($response->getStatusCode() !== 202) {
+                throw new \Exception("SpringBoot retornó: " . $response->getStatusCode());
+            }
+
+            $this->logger->info("✅ Aprobadores guardados correctamente en SpringBoot");
+        } catch (\Throwable $e) {
+            $this->logger->warning("⚠️ Error al llamar SpringBoot: " . $e->getMessage());
+            // No lanzar excepción para no detener el flujo, solo registrar
         }
     }
 
@@ -430,12 +583,11 @@ class RequisitionController extends AbstractController
                 return $this->json(['message' => 'No se encontró aprobación correspondiente al usuario actual.'], 404, $corsHeaders);
             }
             $ordenActual = $aprobadorActual['orden'];
-
-            // 2️⃣ Verificar si quedan productos relevantes pendientes para este aprobador
-            // (productos relevantes = productos de su área/rol que aún no han sido aprobados/rechazados)
             $rolAprobador = $aprobadorActual['rol_aprobador'];
             $technoRoles = ['dicTYP', 'gerTyC'];
             $sstRoles = ['dicSST', 'gerSST'];
+
+            // 2️⃣ Verificar si quedan productos relevantes pendientes para este aprobador
             if (in_array($rolAprobador, $technoRoles)) {
                 $productosRelevantes = $this->conn->fetchAllAssociative(
                     "SELECT id, aprobado FROM requisicion_productos WHERE requisicion_id = ? AND compra_tecnologica = 1",
@@ -467,6 +619,39 @@ class RequisitionController extends AbstractController
                     "UPDATE requisicion_aprobaciones SET estado = 'rechazada', fecha_aprobacion = NOW(), visible = 0 WHERE id = ?",
                     [$aprobadorActual['id']]
                 );
+
+                // 🔥 LÓGICA NUEVA: Si es el primer aprobador (director) y hay un solo producto relevante y fue rechazado,
+                // también marcar como rechazada la aprobación del siguiente aprobador (gerente) si no quedan productos relevantes para él.
+                if (
+                    (in_array($rolAprobador, ['dicTYP', 'dicSST'])) &&
+                    count($productosRelevantes) === 1
+                ) {
+                    // Buscar el siguiente aprobador (gerente del área)
+                    $siguienteRol = $rolAprobador === 'dicTYP' ? 'gerTyC' : ($rolAprobador === 'dicSST' ? 'gerSST' : null);
+                    if ($siguienteRol) {
+                        // Verificar si hay productos relevantes para el gerente
+                        $productosGerente = [];
+                        if ($siguienteRol === 'gerTyC') {
+                            $productosGerente = $this->conn->fetchAllAssociative(
+                                "SELECT id, aprobado FROM requisicion_productos WHERE requisicion_id = ? AND compra_tecnologica = 1",
+                                [$id]
+                            );
+                        } elseif ($siguienteRol === 'gerSST') {
+                            $productosGerente = $this->conn->fetchAllAssociative(
+                                "SELECT id, aprobado FROM requisicion_productos WHERE requisicion_id = ? AND ergonomico = 1",
+                                [$id]
+                            );
+                        }
+                        // Si no hay productos relevantes para el gerente (todos rechazados), marcar su aprobación como rechazada
+                        $productosGerentePendientes = array_filter($productosGerente, fn($p) => $p['aprobado'] !== 'rechazado');
+                        if (count($productosGerentePendientes) === 0) {
+                            $this->conn->executeStatement(
+                                "UPDATE requisicion_aprobaciones SET estado = 'rechazada', fecha_aprobacion = NOW(), visible = 0 WHERE requisicion_id = ? AND rol_aprobador = ?",
+                                [$id, $siguienteRol]
+                            );
+                        }
+                    }
+                }
             } else {
                 $this->conn->executeStatement(
                     "UPDATE requisicion_aprobaciones SET estado = 'aprobada', fecha_aprobacion = NOW(), visible = 0 WHERE id = ?",
@@ -1005,7 +1190,7 @@ class RequisitionController extends AbstractController
             // 4) Cabecera
             $sheet->setCellValue("E7", $requisicion["nombre_solicitante"] ?? "N/A");
             $sheet->setCellValue("E8", $requisicion["fecha"] ?? "N/A");
-            
+
             $sheet->setCellValue("E9", $requisicion["fecha_requerido_entrega"] ?? "N/A");
             $sheet->setCellValue("E10", $requisicion["justificacion"] ?? "N/A");
             $sheet->setCellValue("O7", $requisicion["area"] ?? "N/A");
@@ -1235,17 +1420,42 @@ class RequisitionController extends AbstractController
             return $this->json(['error' => 'Error al obtener productos', 'detail' => $e->getMessage()], 500);
         }
     }
-    #[Route('/requisiciones/{id}/aprobadores', name: 'requisiciones_aprobadores_by_id', methods: ['GET'])]
-    public function getAprobadoresById(int $id): JsonResponse
+    #[Route('/requisiciones/{id}/aprobadores', name: 'requisiciones_aprobadores_correos', methods: ['GET'])]
+    public function getCorreosAprobadoresByRequisicion(int $id): JsonResponse
     {
-        try{
-            $aprobadoresInfo = $this->conn-> fetchAllAssociative(
-                "SELECT * FROM requisicion_aprobaciones WHERE requisicion_id = ?",
-                [$id]
-            );
-            return $this->json(['aprobadores' => $aprobadoresInfo]);
+        try {
+            $sql = "
+            SELECT DISTINCT u.correo
+            FROM requisicion_aprobaciones ra
+            INNER JOIN `user` u
+                ON u.id = ra.usuario_id
+            WHERE ra.requisicion_id = ?
+        ";
+
+            $correos = $this->conn->fetchFirstColumn($sql, [$id]);
+
+            return $this->json([
+                'correos' => $correos
+            ]);
+        } catch (\Throwable $e) {
+            return $this->json([
+                'error' => 'Error al obtener los correos de los aprobadores',
+                'detail' => $e->getMessage()
+            ], 500);
+        }
+    }
+
+    #[Route('/requisiciones/{id}/eliminar-todas', name: 'eliminar_todas_requisiciones', methods: ['DELETE'], requirements: ['id' => '\d+'])]
+    public function eliminarTodas(int $id): JsonResponse
+    {
+        try {
+            $this->conn->executeStatement("DELETE FROM requisicion_productos WHERE requisicion_id = ?", [$id]);
+            $this->conn->executeStatement("DELETE FROM requisicion_aprobaciones WHERE requisicion_id = ?", [$id]);
+            $affected = $this->conn->executeStatement("DELETE FROM requisiciones WHERE id = ?", [$id]);
+            if ($affected === 0) return $this->json(['message' => 'Requisición no encontrada'], 404);
+            return $this->json(['message' => 'Requisición y todos sus datos eliminados correctamente']);
         } catch (Throwable $e) {
-            return $this->json(['error' => 'Error al obtener la informacion de los aprobadores', 'detail' => $e->getMessage()], 500);
+            return $this->json(['error' => 'Error al eliminar requisición y sus datos', 'detail' => $e->getMessage()], 500);
         }
     }
 }
